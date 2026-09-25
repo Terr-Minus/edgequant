@@ -20,14 +20,15 @@ structured description. Nothing leaves the machine.
 | FP32 baseline — latency / VRAM | ✅ **p50 2.26 ms / 60.1 MB peak** (2026-09-25) |
 | ONNX export + numerical equivalence check | ✅ **exported, max abs diff 1.4e-06 (CPU) / 2.6e-04 (CUDA)** |
 | FP16 quantisation | ✅ **21.31 MB, no accuracy loss, no latency gain** |
-| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, 1.6× SLOWER** |
+| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, 1.5× SLOWER** (3 trials) |
 | LLM structured-output stage | ⬜ not started |
 | Service (FastAPI) + packaging | ⬜ not started |
 
 **Headline result: quantisation bought 4× smaller files and cost nothing in
 accuracy — and did not make inference faster.** On this GPU + ONNX Runtime
-combination, INT8 is 1.6× slower than FP32. See the trade-off table below; this
-is the project's most interesting finding and it is a negative one.
+combination INT8 is **1.5× slower** than FP32, confirmed across three
+interleaved trials. See the trade-off table below; this is the project's most
+interesting finding and it is a negative one.
 
 *(This table is updated by hand as stages complete. Nothing here is claimed
 before it has been measured.)*
@@ -241,67 +242,87 @@ This is the overhead excluded from the inference-latency figures above
 
 ## Quantisation results: the trade-off table
 
-Produced by `quantize.py`, all in one run, all on the same test split, all timed
-with the same harness. Raw JSON: `results/quant-fp16.json`, `results/quant-int8.json`.
+Produced by `quantize.py`, on the same test split, timed with the same harness.
+Raw JSON: `results/quant-fp16.json`, `results/quant-int8.json`,
+`results/quant-repeatability.json`.
+
+**Latency figures below are from `confirm_quant.py`: 3 trials per precision, run
+interleaved (fp32, fp16, int8, fp32, …), 50 warmup / 500 iterations each.** The
+single-run numbers from `quantize.py` are in the JSON but are not quoted here —
+one measurement is not evidence. Interleaving matters: running all of one
+precision and then all of the next lets thermal drift correlate with precision,
+which manufactures effects that are not there.
 
 | | FP32 | FP16 | INT8 (QDQ) |
 |---|---|---|---|
 | **File size** | 42.61 MB | **21.31 MB** (½) | **10.77 MB** (¼) |
 | **Test accuracy** | 0.7641 | 0.7661 | **0.7656** |
-| Accuracy vs FP32 | — | **+0.20 pts** | **+0.15 pts** |
-| Inference p50 | 0.920 ms | 0.843 ms | **1.456 ms** |
-| Inference vs FP32 | — | 0.92× (slightly faster) | **1.58× SLOWER** |
-| End-to-end p50 | 1.008 ms | 0.997 ms | 1.687 ms |
-| End-to-end vs FP32 | — | 0.99× | **1.67× SLOWER** |
+| Accuracy vs FP32 | — | +0.20 pts | +0.15 pts |
+| **Inference p50** (3-trial mean ± sd) | 0.835 ± 0.007 ms | 0.826 ± 0.008 ms | **1.239 ± 0.006 ms** |
+| **Inference vs FP32** | — | **0.99×** (no change) | **1.48× SLOWER** (range 1.47–1.50) |
+| End-to-end p50 (3-trial mean ± sd) | 1.000 ± 0.005 ms | 0.996 ± 0.005 ms | 1.406 ± 0.007 ms |
+| End-to-end vs FP32 | — | 1.00× | 1.41× slower |
 | Preprocessing | 0.116 ms | 0.116 ms | 0.116 ms |
 | max abs output diff | — | 1.6e-03 | 4.5e-01 |
-| argmax flips (16 probes) | — | 0 | 0 |
+| argmax flips (16 probes) | — | 0 / 16 | 0 / 16 |
 | Runtime EP | CUDA | CUDA | CUDA |
 
 ### Conclusion, stated plainly
 
 **Quantisation here bought size, not speed.**
 
-- **FP16: no measurable accuracy loss, half the size, latency unchanged.**
-  The 0.92× inference ratio is inside run-to-run noise; treat it as "no
-  change". FP16 is a free 2× size reduction for this model.
+- **FP16: half the size, no measurable accuracy or latency change.**
+  0.99× across three trials (range 0.97–1.01) is "no change", not "faster".
+  FP16 is a free 2× size reduction for this model.
 
-- **INT8: no measurable accuracy loss, a quarter of the size, and 1.6× slower.**
-  The accuracy result is real and holds up: `max abs diff` of 0.445 on logits
-  whose working range is O(1) is the expected magnitude for 8-bit quantisation,
-  there were **zero argmax flips** across the equivalence probes, and the test
-  accuracy difference is +0.15 points on 2005 samples — i.e. inside noise.
-  **The speed regression is real too, and it is the point.**
+- **INT8: a quarter of the size, no measurable accuracy loss, and 1.5× slower.**
+  Both halves are solid:
+
+  *Accuracy.* `max abs diff` of 0.445 on logits whose working range is O(1) is
+  the expected magnitude for 8-bit quantisation. There were **zero argmax flips**
+  across the equivalence probes, and test accuracy differs by +0.15 points on
+  2005 samples — inside noise. The quantised model is structurally genuine:
+  32 QuantizeLinear, 74 DequantizeLinear, 42 INT8 weight initializers.
+
+  *Speed.* INT8 ran slower in **every one of three interleaved trials**
+  (1.50×, 1.47×, 1.49×), with a standard deviation of 0.006 ms on p50. This is
+  not noise and it is not a warmup artefact.
 
 - **Why INT8 is slower.** INT8 accelerates inference only when the runtime has
-  integer kernels that the hardware actually executes. Here the CUDA
+  integer kernels the hardware actually executes. Here the CUDA
   ExecutionProvider runs the QDQ graph as explicit
   QuantizeLinear → Conv → DequantizeLinear sequences, so the model pays
-  dequantisation overhead on every layer boundary and gains no integer matmul.
-  The quantisation arithmetic still runs on float tensor cores. **The win
-  requires TensorRT (or an INT8-native accelerator), which this project
-  deliberately excludes by scope** — see the exclusions below.
+  dequantisation at every layer boundary and gains no integer matmul — the
+  arithmetic still lands on float tensor cores. **The win requires TensorRT, or
+  an INT8-native accelerator, which this project excludes by scope.**
 
 - **This is the engineering finding worth reporting.** "Quantise the model to
-  make it faster" is not a rule; it is a hypothesis that depends on the backend.
-  Measured on this stack, the hypothesis is false: 4× smaller, same accuracy,
-  1.6× slower. Anyone who reports only the size and accuracy columns is
-  reporting half the result.
+  make it faster" is not a rule; it is a hypothesis about the backend. Measured
+  on this stack the hypothesis is false: **4× smaller, same accuracy, 1.5×
+  slower.** Anyone reporting only the size and accuracy columns is reporting
+  half the result — and the missing half is the one that decides whether the
+  change is worth making.
 
 ### Reader's caveats on these numbers
 
-- **p95 is noisy in these runs.** The p95/p50 ratio came out between 1.5 and
-  1.8, above the harness's ~1.5 warning threshold, so the tail is not fully
-  characterised. The **p50 figures are stable** (FP32 inference p50 has measured
-  0.879 / 0.890 / 0.920 ms across runs) and the conclusions rest on p50. A
-  1000-iteration re-run with a longer warmup would tighten p95.
-- **Single run per precision.** The FP16 and INT8 rows are one measurement each;
-  the FP32 row here is one of several. Before quoting the 1.58× figure in a
-  document, re-run INT8 two or three times and confirm the direction.
+- **p95 is still noisy.** Even at 500 iterations the p95/p50 ratio sits at
+  ~2.0 (fp32/fp16) and ~1.8 (int8), above the harness's ~1.5 warning threshold.
+  The tail is therefore **not characterised**, and no conclusion here uses p95.
+  Everything rests on p50, whose standard deviation across trials is 0.006–0.008
+  ms. A much longer run on an idle machine would be needed to say anything about
+  the tail, and this desktop has background GPU load.
+- **Repeatability was checked** (`confirm_quant.py`, 3 interleaved trials at 50
+  warmup / 500 iters). INT8 was slower in all three, so the direction is
+  established. The magnitude is stated as a range (1.47–1.50×) rather than a
+  point estimate.
 - **Calibration used 512 train-split images, MinMax, per-channel weights.** No
   comparison across calibration methods was done (limitation #7 below).
 - **Activations are per-tensor.** Per-channel activations would need a custom
   quantiser and were not attempted.
+- **onnxruntime warns that it inserted 21 Memcpy nodes for the CUDA EP**, which
+  it says may hurt performance. This warning appears for the FP32 model. It is
+  one plausible contributor to the fact that FP16 shows no speedup either; the
+  effect was not isolated.
 
 ---
 
@@ -331,6 +352,7 @@ models.py             the architecture, defined ONCE (train + benchmark + quanti
 train_dermamnist.py   fine-tune ResNet-18 on DermaMNIST -> FP32 checkpoint + test accuracy
 benchmark.py          latency (mean/p50/p95), peak VRAM, environment snapshot -> JSON
 quantize.py           ONNX export -> FP16 / INT8 -> equivalence check -> accuracy -> latency
+confirm_quant.py      repeats the quantisation latency comparison, interleaved, 3 trials
 data/                 MedMNIST downloads            (gitignored, re-downloadable)
 checkpoints/          trained weights                (gitignored)
 models/               ONNX exports, all precisions   (gitignored)
