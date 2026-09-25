@@ -19,9 +19,15 @@ structured description. Nothing leaves the machine.
 | FP32 baseline — accuracy | ✅ **0.7651 test accuracy** (2026-09-25) |
 | FP32 baseline — latency / VRAM | ✅ **p50 2.26 ms / 60.1 MB peak** (2026-09-25) |
 | ONNX export + numerical equivalence check | ✅ **exported, max abs diff 1.4e-06 (CPU) / 2.6e-04 (CUDA)** |
-| FP16 / INT8 quantisation | ⬜ not started |
+| FP16 quantisation | ✅ **21.31 MB, no accuracy loss, no latency gain** |
+| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, 1.6× SLOWER** |
 | LLM structured-output stage | ⬜ not started |
 | Service (FastAPI) + packaging | ⬜ not started |
+
+**Headline result: quantisation bought 4× smaller files and cost nothing in
+accuracy — and did not make inference faster.** On this GPU + ONNX Runtime
+combination, INT8 is 1.6× slower than FP32. See the trade-off table below; this
+is the project's most interesting finding and it is a negative one.
 
 *(This table is updated by hand as stages complete. Nothing here is claimed
 before it has been measured.)*
@@ -98,10 +104,10 @@ python benchmark.py --model checkpoints/resnet18-dermamnist-fp32.pt \
     --iters 200 --warmup 20 --label baseline-fp32 \
     --output results/baseline-fp32.json
 
-# 3. (later) the ONNX path
-python benchmark.py --onnx models/resnet18-dermamnist-fp32.onnx \
-    --iters 200 --warmup 20 --label onnx-fp32 \
-    --output results/onnx-fp32.json
+# 3. quantise and measure all three precisions in one run
+python quantize.py --precision both          # FP16 + INT8, equivalence + accuracy + latency
+python quantize.py --precision fp16           # FP16 only
+python quantize.py --precision int8 --quant-format qdq --calib-samples 512
 ```
 
 `data/`, `checkpoints/`, `results/` are gitignored. The dataset re-downloads on
@@ -233,6 +239,72 @@ This is the overhead excluded from the inference-latency figures above
 
 ---
 
+## Quantisation results: the trade-off table
+
+Produced by `quantize.py`, all in one run, all on the same test split, all timed
+with the same harness. Raw JSON: `results/quant-fp16.json`, `results/quant-int8.json`.
+
+| | FP32 | FP16 | INT8 (QDQ) |
+|---|---|---|---|
+| **File size** | 42.61 MB | **21.31 MB** (½) | **10.77 MB** (¼) |
+| **Test accuracy** | 0.7641 | 0.7661 | **0.7656** |
+| Accuracy vs FP32 | — | **+0.20 pts** | **+0.15 pts** |
+| Inference p50 | 0.920 ms | 0.843 ms | **1.456 ms** |
+| Inference vs FP32 | — | 0.92× (slightly faster) | **1.58× SLOWER** |
+| End-to-end p50 | 1.008 ms | 0.997 ms | 1.687 ms |
+| End-to-end vs FP32 | — | 0.99× | **1.67× SLOWER** |
+| Preprocessing | 0.116 ms | 0.116 ms | 0.116 ms |
+| max abs output diff | — | 1.6e-03 | 4.5e-01 |
+| argmax flips (16 probes) | — | 0 | 0 |
+| Runtime EP | CUDA | CUDA | CUDA |
+
+### Conclusion, stated plainly
+
+**Quantisation here bought size, not speed.**
+
+- **FP16: no measurable accuracy loss, half the size, latency unchanged.**
+  The 0.92× inference ratio is inside run-to-run noise; treat it as "no
+  change". FP16 is a free 2× size reduction for this model.
+
+- **INT8: no measurable accuracy loss, a quarter of the size, and 1.6× slower.**
+  The accuracy result is real and holds up: `max abs diff` of 0.445 on logits
+  whose working range is O(1) is the expected magnitude for 8-bit quantisation,
+  there were **zero argmax flips** across the equivalence probes, and the test
+  accuracy difference is +0.15 points on 2005 samples — i.e. inside noise.
+  **The speed regression is real too, and it is the point.**
+
+- **Why INT8 is slower.** INT8 accelerates inference only when the runtime has
+  integer kernels that the hardware actually executes. Here the CUDA
+  ExecutionProvider runs the QDQ graph as explicit
+  QuantizeLinear → Conv → DequantizeLinear sequences, so the model pays
+  dequantisation overhead on every layer boundary and gains no integer matmul.
+  The quantisation arithmetic still runs on float tensor cores. **The win
+  requires TensorRT (or an INT8-native accelerator), which this project
+  deliberately excludes by scope** — see the exclusions below.
+
+- **This is the engineering finding worth reporting.** "Quantise the model to
+  make it faster" is not a rule; it is a hypothesis that depends on the backend.
+  Measured on this stack, the hypothesis is false: 4× smaller, same accuracy,
+  1.6× slower. Anyone who reports only the size and accuracy columns is
+  reporting half the result.
+
+### Reader's caveats on these numbers
+
+- **p95 is noisy in these runs.** The p95/p50 ratio came out between 1.5 and
+  1.8, above the harness's ~1.5 warning threshold, so the tail is not fully
+  characterised. The **p50 figures are stable** (FP32 inference p50 has measured
+  0.879 / 0.890 / 0.920 ms across runs) and the conclusions rest on p50. A
+  1000-iteration re-run with a longer warmup would tighten p95.
+- **Single run per precision.** The FP16 and INT8 rows are one measurement each;
+  the FP32 row here is one of several. Before quoting the 1.58× figure in a
+  document, re-run INT8 two or three times and confirm the direction.
+- **Calibration used 512 train-split images, MinMax, per-channel weights.** No
+  comparison across calibration methods was done (limitation #7 below).
+- **Activations are per-tensor.** Per-channel activations would need a custom
+  quantiser and were not attempted.
+
+---
+
 ## What this project does NOT claim
 
 Written down deliberately, because a stated limitation is more credible than an
@@ -255,13 +327,20 @@ implied capability. Full list in the project plan; the load-bearing ones:
 ## Repository layout
 
 ```
+models.py             the architecture, defined ONCE (train + benchmark + quantize share it)
 train_dermamnist.py   fine-tune ResNet-18 on DermaMNIST -> FP32 checkpoint + test accuracy
 benchmark.py          latency (mean/p50/p95), peak VRAM, environment snapshot -> JSON
+quantize.py           ONNX export -> FP16 / INT8 -> equivalence check -> accuracy -> latency
 data/                 MedMNIST downloads            (gitignored, re-downloadable)
 checkpoints/          trained weights                (gitignored)
-models/               ONNX exports                   (gitignored)
-results/              benchmark JSON output          (gitignored)
+models/               ONNX exports, all precisions   (gitignored)
+results/              benchmark and quantisation JSON (gitignored)
 ```
+
+`models.py` exists because `benchmark.py` and `quantize.py` both have to rebuild
+the exact architecture to load a `state_dict`, and two copy-pasted definitions
+drift until `load_state_dict` fails with confusing missing/unexpected keys. One
+definition, imported everywhere.
 
 ### Two methodology details a reviewer will ask about
 
