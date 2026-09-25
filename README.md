@@ -16,9 +16,9 @@ structured description. Nothing leaves the machine.
 | Stage | State |
 |---|---|
 | Environment (torch cu121, onnxruntime-gpu, medmnist) | ✅ done |
-| FP32 baseline — accuracy | ⬜ not run yet |
-| FP32 baseline — latency / VRAM | ⬜ not run yet |
-| ONNX export + numerical equivalence check | ⬜ not started |
+| FP32 baseline — accuracy | ✅ **0.7651 test accuracy** (2026-09-25) |
+| FP32 baseline — latency / VRAM | ✅ **p50 2.26 ms / 60.1 MB peak** (2026-09-25) |
+| ONNX export + numerical equivalence check | ✅ **exported, max abs diff 1.4e-06 (CPU) / 2.6e-04 (CUDA)** |
 | FP16 / INT8 quantisation | ⬜ not started |
 | LLM structured-output stage | ⬜ not started |
 | Service (FastAPI) + packaging | ⬜ not started |
@@ -129,20 +129,107 @@ Two failures in this project look like something else entirely:
 
 ## Baseline numbers (FP32 reference)
 
-> ⬜ **Not measured yet.** Run step 1 and 2 above, then fill this in.
-> Reported accuracy is test-split accuracy from the best-val checkpoint, measured
-> once. Do not fill this table from memory or from a paper.
+Measured 2026-09-25 on the machine described in `ENVIRONMENT.md`. Accuracy is
+test-split accuracy from the best-val checkpoint, measured once. Raw JSON:
+`results/fp32-accuracy.json`, `results/baseline-fp32.json`,
+`results/baseline-fp32-idle.json`.
+
+### Accuracy
 
 | Metric | Value |
 |---|---|
-| Test accuracy | _pending_ |
-| Latency p50 (ms) | _pending_ |
-| Latency p95 (ms) | _pending_ |
-| Peak VRAM — allocated (MB) | _pending_ |
-| Peak VRAM — reserved (MB) | _pending_ |
-| Input shape | 1×3×28×28 |
-| Precision | FP32 |
-| Trained from scratch or ImageNet-pretrained? | **from scratch** (`weights=None`) |
+| **Test accuracy** | **0.7651** |
+| Best validation accuracy | 0.7747 |
+| Train accuracy | 0.7998 |
+| Train − test gap | 0.035 — **no meaningful overfitting** |
+| Epochs | 10 (AdamW, lr 1e-3, cosine schedule, seed 0) |
+| Training time | 34.2 s on RTX 3080 Ti |
+| Initialisation | **from scratch** (`weights=None`), not ImageNet-pretrained |
+
+Validation (0.7747) and test (0.7651) differ by under one point, and train/test
+by 3.5 points, so this reference model is stable rather than overfit — the
+property the quantisation comparison needs.
+
+### Latency (ms, batch 1, input 1×3×28×28, PyTorch, 200 iters after 20 warmup)
+
+| Metric | Value |
+|---|---|
+| mean | 2.34 |
+| **p50** | **2.26** |
+| p95 | 2.74 |
+| min | 2.15 |
+| max | 3.33 |
+| stdev | 0.186 |
+| p95/p50 | 1.207 |
+
+### Memory
+
+| Metric | Value | Notes |
+|---|---|---|
+| Peak allocated (this process) | **60.1 MB** | torch counter; unaffected by other applications |
+| Peak reserved (this process) | **86.0 MB** | torch caching allocator |
+| **CUDA context overhead** | **≈374 MB** (342–390 across 5 runs) | see below |
+| Whole-device before run | 1399–1514 MB used | desktop applications only |
+| Whole-device after run | 1789–1856 MB used | context + model + desktop |
+
+**The model is 60 MB, but merely initialising CUDA for it costs about 374 MB —
+6.2× the model itself.** Measured five times, stable within 50 MB. Sizing a
+deployment from "the model is 60 MB" therefore underestimates the real footprint
+by a large factor.
+
+> **Scope limit — do not overstate this in an interview.** The 374 MB figure is
+> specific to the NVIDIA desktop driver stack. Edge accelerators (Qualcomm
+> Hexagon, Rockchip RKNN, Hailo, mobile Mali/Adreno) do **not** create a CUDA
+> context. What transfers is the *category* — every runtime carries a fixed
+> initialisation cost that does not shrink with the model — and the *method*:
+> measure it on the target, do not assume it. The desktop number is not a
+> prediction for an NPU.
+
+### Latency is insensitive to background GPU load (measured)
+
+The same checkpoint was benchmarked with Minecraft (≈25–38% GPU utilisation,
+1.79 GB resident) plus browsers running, and again with them closed:
+
+| Condition | p50 (ms) | p95/p50 |
+|---|---|---|
+| Background GPU load present | 2.257 (mean of 3 runs) | 1.17–1.39 |
+| Idle desktop | 2.259 (mean of 2 runs) | 1.21–1.30 |
+| **Difference** | **0.002 ms (0.1%)** | — |
+
+A model this small does not contend for the GPU, so latency is stable either way.
+Peak per-process memory is unaffected by other applications by construction. The
+metric that *does* move is whole-device VRAM — which is why it is recorded
+separately rather than blended into the headline numbers.
+
+### ONNX export and numerical equivalence
+
+Exported to `models/resnet18-dermamnist-fp32.onnx` (42.6 MB, opset 17) and
+compared with the PyTorch output on the same input:
+
+| Execution provider | max abs difference | Verdict |
+|---|---|---|
+| CPUExecutionProvider | 1.4e-06 | equivalent |
+| CUDAExecutionProvider | 2.6e-04 | equivalent at FP32 working precision (≈1e-7 relative) |
+
+The GPU path differs slightly more because kernels accumulate in a different
+order; neither difference could change a predicted class. **This check is
+mandatory before any quantised comparison** — without it there is no evidence
+that the ONNX model and the PyTorch model are the same model.
+
+### Preprocessing cost
+
+Measured on CPU with the DermaMNIST eval transform (ToTensor + Normalize):
+
+| Stage | Time |
+|---|---|
+| Preprocessing only | 0.18 ms |
+| Inference only | 2.33 ms (CPU EP) / 1.07 ms (CUDA EP) |
+| Preprocessing + inference | 2.71 ms (CPU) / 1.12 ms (CUDA) |
+
+Preprocessing is ~5% of end-to-end on the GPU path, and only for an already-
+decoded 28×28 array. Decoding and resizing a real photograph costs far more.
+This is the overhead excluded from the inference-latency figures above
+(limitation #2 below).
 
 ---
 
