@@ -240,15 +240,22 @@ def timed_run(fn, warmup: int, iters: int, sync=None) -> dict:
 
 
 def load_torch_model(path: str, device):
-    """Load a TorchScript archive OR a train_dermamnist.py state_dict checkpoint.
+    """Load a TorchScript archive OR a training state_dict checkpoint.
 
     Both formats end in `.pt`, so the extension cannot be trusted to tell them
     apart. TorchScript is attempted first; on failure we fall back to rebuilding
-    the ResNet-18 28x28 architecture and loading the state dict.
+    the architecture via models.build_model_from_checkpoint().
+
+    The architecture is NOT defined here. It used to be, copy-pasted from
+    train_dermamnist.py, which meant editing one and forgetting the other
+    produced a RuntimeError about missing/unexpected state_dict keys. models.py
+    is now the single definition.
 
     Returns (model, checkpoint_metadata). Metadata is empty for TorchScript.
     """
     import torch
+
+    from models import build_model_from_checkpoint, load_checkpoint
 
     try:
         return torch.jit.load(path, map_location=device), {}
@@ -258,7 +265,7 @@ def load_torch_model(path: str, device):
         pass
 
     try:
-        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        checkpoint = load_checkpoint(path, map_location="cpu")
     except Exception as error:  # noqa: BLE001 - surfaced with context below
         raise SystemExit(
             f"Could not load {path} as TorchScript or as a checkpoint: {error}"
@@ -270,18 +277,7 @@ def load_torch_model(path: str, device):
             "'state_dict' key. Refusing to benchmark an unidentified file."
         )
 
-    import torch.nn as nn
-    from torchvision.models import resnet18
-
-    # Architecture must match train_dermamnist.py EXACTLY, or the state dict
-    # will not load. Keep these two in sync if either script changes.
-    num_classes = int(checkpoint.get("num_classes", 7))
-    model = resnet18(weights=None)
-    model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-    model.maxpool = nn.Identity()
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
-    model.load_state_dict(checkpoint["state_dict"])
-    return model, checkpoint
+    return build_model_from_checkpoint(checkpoint), checkpoint
 
 
 def bench_torch(args) -> dict:
