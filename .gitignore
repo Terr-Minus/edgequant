@@ -1,0 +1,34 @@
+# ---- Data and artifacts: never commit these ----
+# MedMNIST downloads (DermaMNIST .npz files). Public dataset, but 10s of MB and
+# re-downloadable; committing data makes the repo fat and unreproducible.
+data/
+
+# Trained checkpoints. Reproducible from train_dermamnist.py + a recorded seed.
+checkpoints/
+
+# Benchmark output. These ARE the deliverable numbers, but they live in the
+# working tree; publish the ones you cite in README/report explicitly.
+results/
+
+# ONNX exports and quantised models
+*.onnx
+*.engine
+*.trt
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+build/
+dist/
+
+# ---- Environments ----
+.venv/
+venv/
+.env
+
+# ---- Scratch ----
+*.log
+scratch/
