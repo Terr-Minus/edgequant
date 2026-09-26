@@ -210,7 +210,7 @@ property the quantisation comparison needs.
 deployment from "the model is 60 MB" therefore underestimates the real footprint
 by a large factor.
 
-> **Scope limit — do not overstate this in an interview.** The 374 MB figure is
+> **Scope limit — do not overstate this.** The 374 MB figure is
 > specific to the NVIDIA desktop driver stack. Edge accelerators (Qualcomm
 > Hexagon, Rockchip RKNN, Hailo, mobile Mali/Adreno) do **not** create a CUDA
 > context. What transfers is the *category* — every runtime carries a fixed
@@ -479,7 +479,7 @@ Four things follow, and the first is the one worth remembering:
    neither is accelerated by having become integer: the bottleneck is the
    quantise/dequantise and copy traffic, not the arithmetic that moved to the CPU.
 
-**Interview-safe summary:** *"I measured both INT8 formats rather than assuming
+**Plain-language summary:** *"I measured both INT8 formats rather than assuming
 they were equivalent. They produced identical quantisation parameters and a
 2-point accuracy difference, and the profiler showed the integer format had 78%
 of its nodes on the CPU because the CUDA execution provider has no integer
@@ -529,7 +529,7 @@ whose depthwise convolutions have much wider per-channel range spread.** That is
 where to look for the effect, and saying so is more useful than repeating the
 claim.
 
-**Interview-safe summary:** *"I measured the two knobs everyone repeats and could
+**Plain-language summary:** *"I measured the two knobs everyone repeats and could
 not detect an effect from either — 0.2 points on a ±0.5 point interval over 2005
 samples. So I report them as below my test set's resolution instead of claiming a
 benefit, and I can name the model and the measurement that would settle it."*

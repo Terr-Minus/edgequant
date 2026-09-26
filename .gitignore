@@ -43,9 +43,9 @@ venv/
 scratch/
 
 # ---- Private, not part of the published project ----
-# LEARNING-NOTES.md is a personal learning log: question sequences, corrections
-# of my own wrong explanations, interview-coaching notes and cross-window task
-# lists. It is deliberately kept OUT of the public repository while staying on
-# disk at the same path, so the study workflow is unaffected. Published repos
-# should carry engineering evidence, not preparation strategy.
+# LEARNING-NOTES.md is a personal study log: question sequences, corrections of
+# my own wrong explanations, and cross-window task lists. It is deliberately kept
+# OUT of the published repository while staying on disk at the same path, so the
+# study workflow is unaffected. A published repo should carry engineering
+# evidence, not preparation notes.
 LEARNING-NOTES.md

@@ -22,7 +22,8 @@ Data-split discipline (the rule that keeps the conclusion honest)
 
 Calibrating on test would leak test data into the quantisation process and
 inflate the reported accuracy -- the quantisation analogue of training on the
-test set. It is a classic mistake and an interviewer will ask about it.
+test set. It is a classic mistake, and the first question a reviewer should ask
+about any quantisation result.
 
 Latency is measured with benchmark.py's timed_run(), so the method (warmup,
 cuda synchronise on both sides, nearest-rank percentiles) is identical to the
