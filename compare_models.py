@@ -252,7 +252,8 @@ def interleaved_latency(models: dict[str, str], providers: list[str], trials: in
     """
     from quantize import bench_onnx_latency
 
-    raw = {n: {"inference": [], "inference_p95": [], "end_to_end": []} for n in models}
+    raw = {n: {"inference": [], "inference_p95": [], "p95_over_p50": [],
+               "end_to_end": []} for n in models}
     for trial in range(1, trials + 1):
         if verbose:
             print(f"\n--- trial {trial}/{trials} ---")
@@ -260,6 +261,7 @@ def interleaved_latency(models: dict[str, str], providers: list[str], trials: in
             r = bench_onnx_latency(path, providers, warmup, iters)
             raw[name]["inference"].append(r["inference"]["p50_ms"])
             raw[name]["inference_p95"].append(r["inference"]["p95_ms"])
+            raw[name]["p95_over_p50"].append(r["inference"]["p95_over_p50"])
             raw[name]["end_to_end"].append(r["end_to_end"]["p50_ms"])
             if verbose:
                 active = "CUDA" if "CUDAExecutionProvider" in r["providers"] else "CPU!"
@@ -339,9 +341,20 @@ def main() -> int:
     if reference not in models:
         raise SystemExit(f"reference {reference!r} is not in the model set")
 
+    # The machine state is part of the measurement, not context around it: the
+    # QDQ graph crosses the PCIe bus 21 times per inference, so what else is
+    # resident changes its p50 (measured: 1.48x vs 1.72x FP32). Recorded here
+    # with the same helper benchmark.py uses, for the same reason.
+    from benchmark import device_memory_snapshot
+
+    device_before = device_memory_snapshot()
+
     print("=" * 74)
     print("model comparison")
     print("=" * 74)
+    print(f"  machine: {device_before.get('device_used_mb')} MB used of "
+          f"{device_before.get('device_total_mb')} MB, "
+          f"{device_before.get('device_utilization_pct')}% util before the run")
     for name, path in models.items():
         size_mb = Path(path).stat().st_size / 1024**2
         marker = "  <- reference" if name == reference else ""
@@ -440,6 +453,8 @@ def main() -> int:
         "accuracy_split": "test",
         "calibration_split": "train",
         "n_test_samples": n_samples,
+        "machine_state_before": device_before,
+        "machine_state_after": device_memory_snapshot(),
         "models": models,
         "sizes_mb": {n: round(Path(p).stat().st_size / 1024**2, 2) for n, p in models.items()},
         "accuracy": accuracy,

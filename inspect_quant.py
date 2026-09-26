@@ -215,11 +215,18 @@ def compare_scales(baseline_path: str, other_path: str) -> dict:
     max_rel = 0.0
     worst = None
     shape_mismatches = 0
+    compared = 0
     for name in shared:
         a, b = base[name], other[name]
         if a.shape != b.shape:
+            # Different granularity: a per-tensor scale is a scalar, a
+            # per-channel one is a vector. These are not "equal", they are not
+            # comparable at all -- and silently skipping them while still
+            # reporting identical_within_1e-6=True is how this function lied the
+            # first time it was pointed at a per-tensor model.
             shape_mismatches += 1
             continue
+        compared += 1
         denom = np.maximum(np.abs(a), 1e-12)
         rel = float(np.max(np.abs(a - b) / denom))
         if rel > max_rel:
@@ -227,12 +234,13 @@ def compare_scales(baseline_path: str, other_path: str) -> dict:
     return {
         "baseline": Path(baseline_path).stem,
         "shared_weights": len(shared),
+        "tensors_compared": compared,
         "baseline_only": len(set(base) - set(other)),
         "other_only": len(set(other) - set(base)),
         "shape_mismatches": shape_mismatches,
-        "max_relative_scale_difference": max_rel,
+        "max_relative_scale_difference": max_rel if compared else None,
         "worst_tensor": worst,
-        "identical_within_1e-6": max_rel < 1e-6,
+        "identical_within_1e-6": bool(compared and max_rel < 1e-6),
     }
 
 
@@ -346,10 +354,14 @@ def main() -> int:
         for path in models:
             cmp = compare_scales(baseline, path)
             report["scale_comparison"]["vs"][Path(path).stem] = cmp
-            if cmp.get("shared_weights"):
-                print(f"  {Path(path).stem:<34} shared={cmp['shared_weights']} "
+            if cmp.get("tensors_compared"):
+                print(f"  {Path(path).stem:<34} compared={cmp['tensors_compared']} "
                       f"max_rel_diff={cmp['max_relative_scale_difference']:.3e}  "
                       f"identical={cmp['identical_within_1e-6']}")
+            elif cmp.get("shape_mismatches"):
+                print(f"  {Path(path).stem:<34} NOT COMPARABLE: "
+                      f"{cmp['shape_mismatches']} tensors differ in granularity "
+                      f"(scalar vs vector scale)")
             else:
                 print(f"  {Path(path).stem:<34} {cmp.get('note')}")
 

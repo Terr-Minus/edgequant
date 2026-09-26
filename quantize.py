@@ -31,10 +31,15 @@ another way is how people publish quantisation speedups that do not exist.
 
 Usage
 -----
-    python quantize.py --precision fp16
     python quantize.py --precision int8 --quant-format qdq
+    python quantize.py --precision int8 --quant-format qoperator
     python quantize.py --precision int8 --calib-method entropy --calib-samples 1024
+    python quantize.py --precision int8 --weight-granularity per-tensor   # control
     python quantize.py --precision both
+
+The three INT8 axes (format / weight granularity / calibration method) each get
+their own output filename, so a comparison run cannot silently overwrite the
+configuration it is being compared against.
 """
 
 from __future__ import annotations
@@ -201,7 +206,7 @@ def build_calibration_reader(root: str, n_samples: int, batch_size: int = 64):
 
 
 def quantize_int8(src: str, dst: str, reader, quant_format: str, calib_method: str,
-                  staging_dir: str | None = None) -> str:
+                  staging_dir: str | None = None, per_channel: bool = True) -> str:
     """INT8 static quantisation.
 
     Uses the high-level `quantize_static`, NOT a hand-rolled pipeline. An earlier
@@ -258,9 +263,21 @@ def quantize_int8(src: str, dst: str, reader, quant_format: str, calib_method: s
         tempfile._resetperms = lambda path: None
 
     try:
-        # Weights per-channel (ORT's default for Conv and the single biggest
-        # accuracy win); activations per-tensor. Per-channel activations would
-        # need a custom quantiser and are out of scope.
+        # Weights per-channel by default (ORT's default for Conv, and long
+        # described as the single biggest accuracy win -- a claim this project
+        # then measured and could NOT confirm on this model: per-tensor weights
+        # differ by -0.20 pts with a 95% CI of [-0.65, +0.25]. See README
+        # "What did not move the needle". The default is kept because per-channel
+        # is free here, not because a benefit was demonstrated). Activations are
+        # per-tensor; per-channel activations would need a custom quantiser and
+        # are out of scope.
+        #
+        # per_channel=False is exposed as a control condition, not as a
+        # recommendation: it is the only way to put a number on what the
+        # per-channel setting buys. `inspect_quant.py` can show that the scales
+        # vary by a median 3.4x between channels, but only a re-run can show
+        # what that costs in accuracy -- and the answer was "below the
+        # resolution of a 2005-sample test set".
         quantize_static(
             model_input=src,
             model_output=dst,
@@ -269,7 +286,7 @@ def quantize_int8(src: str, dst: str, reader, quant_format: str, calib_method: s
             activation_type=QuantType.QUInt8,
             weight_type=QuantType.QInt8,
             calibrate_method=method,
-            per_channel=True,
+            per_channel=per_channel,
         )
     finally:
         tempfile.TemporaryDirectory = original_temporary_directory
@@ -509,6 +526,12 @@ def main() -> int:
     )
     parser.add_argument("--calib-method", default="minmax",
                         choices=["minmax", "entropy", "percentile"])
+    parser.add_argument("--weight-granularity", default="per-channel",
+                        choices=["per-channel", "per-tensor"],
+                        help="INT8 weight quantisation granularity. per-channel is "
+                             "the default and the better choice; per-tensor exists as "
+                             "a CONTROL condition so the benefit can be measured "
+                             "instead of asserted.")
     parser.add_argument("--calib-samples", type=int, default=512,
                         help="TRAIN-split samples used for INT8 calibration")
     parser.add_argument("--eval-batch-size", type=int, default=256)
@@ -577,13 +600,24 @@ def main() -> int:
     if args.precision in ("int8", "both"):
         print("\n--- quantise to INT8 ---")
         print(f"  format={args.quant_format}  method={args.calib_method}  "
-              f"calib_samples={args.calib_samples}")
+              f"calib_samples={args.calib_samples}  "
+              f"weights={args.weight_granularity}")
         reader = build_calibration_reader(args.data_root, args.calib_samples)
-        int8_path = str(outdir / f"resnet18-dermamnist-int8-{args.quant_format}.onnx")
+        # Variant suffix, so the three axes (format / granularity / calibration
+        # method) get distinct files instead of silently overwriting each other.
+        # The defaults keep their historical names, which other scripts and the
+        # published results already reference.
+        variant = f"int8-{args.quant_format}"
+        if args.weight_granularity != "per-channel":
+            variant += "-pertensor"
+        if args.calib_method != "minmax":
+            variant += f"-{args.calib_method}"
+        int8_path = str(outdir / f"resnet18-dermamnist-{variant}.onnx")
         quantize_int8(fp32_path, int8_path, reader, args.quant_format,
-                      args.calib_method, args.staging_dir)
+                      args.calib_method, args.staging_dir,
+                      per_channel=args.weight_granularity == "per-channel")
         print(f"  {int8_path}  {human(Path(int8_path).stat().st_size)}")
-        variants.append((f"int8-{args.quant_format}", int8_path))
+        variants.append((variant, int8_path))
 
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
@@ -643,6 +677,8 @@ def main() -> int:
         "quant_format": args.quant_format,
         "calib_method": args.calib_method,
         "calib_samples": args.calib_samples,
+        "weight_granularity": args.weight_granularity,
+        "activation_granularity": "per-tensor",
         "calibration_split": "train",
         "accuracy_split": "test",
         "sizes_bytes": {n: Path(p).stat().st_size for n, p in variants},

@@ -20,18 +20,20 @@ structured description. Nothing leaves the machine.
 | FP32 baseline — latency / VRAM | ✅ **p50 2.26 ms / 60.1 MB peak** (2026-09-25) |
 | ONNX export + numerical equivalence check | ✅ **exported, max abs diff 1.4e-06 (CPU) / 2.6e-04 (CUDA)** |
 | FP16 quantisation | ✅ **21.31 MB, no accuracy loss, no latency gain** |
-| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, slower than FP32 in 9/9 trials** |
+| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, slower than FP32 in 14/14 trials** |
 | INT8 quantisation (QOperator format) | ✅ **10.71 MB, −2.05 pts (statistically real), 78% of nodes execute on the CPU** |
 | INT8 format choice (QDQ vs QOperator) | ✅ **settled by measurement** — see "QDQ vs QOperator" below |
+| Weight granularity + calibration method | ✅ **both measured; neither showed an effect** — see "What did *not* move the needle" |
 | LLM structured-output stage | ⬜ not started |
 | Service (FastAPI) + packaging | ⬜ not started |
 
 **Headline result: quantisation bought 4× smaller files and cost nothing in
 accuracy — and did not make inference faster.** INT8 (QDQ) was slower than FP32
-in every one of nine interleaved trials across three sessions; the ratio ranged
-1.48× (quiet machine) to 1.72× (browser and desktop GPU load present). See the
-trade-off table below. This is the project's most interesting finding and it is
-a negative one.
+in every one of **fourteen** interleaved trials across four measurement sessions:
+**1.38×** on a quiet machine (5 trials, p50 sd 0.02 ms) rising to **1.72×** with
+browsers and the desktop compositor resident. The direction never wavered; the
+magnitude did. See the trade-off table below — this is the project's most
+interesting finding and it is a negative one.
 
 **The format matters twice over.** The same quantisation parameters, emitted as
 QDQ and as QOperator, differ by 2 accuracy points and by 78% of the graph's
@@ -122,8 +124,14 @@ python quantize.py --precision fp16           # FP16 only
 python quantize.py --precision int8 --quant-format qdq --calib-samples 512
 python quantize.py --precision int8 --quant-format qoperator   # the other INT8 format
 
+# 3b. control conditions: does weight granularity / the calibration method matter?
+python quantize.py --precision int8 --weight-granularity per-tensor
+python quantize.py --precision int8 --calib-method entropy
+python quantize.py --precision int8 --calib-method percentile
+
 # 4. compare everything at once: paired accuracy, node placement, interleaved latency
 python compare_models.py --trials 3 --warmup 50 --iters 500
+python compare_models.py --reference int8-qdq --skip-latency   # paired, one model against another
 
 # 5. read the quantisation parameters back out of the files (no GPU needed)
 python inspect_quant.py
@@ -348,24 +356,28 @@ which manufactures effects that are not there.
 
 ### Why the ratio moves between sessions
 
-The same models were measured three times on the same machine, hours apart:
+The same models were measured four times on the same machine, hours apart:
 
 | Session | Background | FP32 p50 | INT8-QDQ p50 | QDQ / FP32 |
 |---|---|---|---|---|
-| 1 (2026-09-25, `confirm_quant.py`) | quiet desktop | 0.835 ms | 1.239 ms | **1.48×** (1.47–1.50) |
-| 2 (2026-09-26) | browsers, VS Code, Wallpaper Engine | 0.936 ms | 1.491 ms | **1.59×** (1.47–1.72) |
-| 3 (2026-09-26) | same | 1.019 ms | 1.754 ms | **1.72×** (1.59–1.91) |
+| 1 (2026-09-25, 3 trials, `confirm_quant.py`) | quiet desktop | 0.835 ms | 1.239 ms | **1.48×** (1.47–1.50) |
+| 2 (2026-09-26, 3 trials) | browsers, VS Code, Wallpaper Engine | 0.936 ms | 1.491 ms | **1.59×** (1.47–1.72) |
+| 3 (2026-09-26, 3 trials) | same | 1.019 ms | 1.754 ms | **1.72×** (1.59–1.91) |
+| **4 (2026-09-26, 5 trials)** | **Chrome and Wallpaper Engine closed** | **0.929 ms** | **1.278 ms** | **1.38×** (1.22–1.54) |
 
-The signed effect never changed; the magnitude did, by ~16%. The QDQ graph is the
-sensitive one because it crosses the PCIe bus **21 times per inference** — CPU
-scheduling pressure and memcpy latency show up directly in its p50, while FP32
-never leaves the device. The p95/p50 warning threshold (~1.5) was also exceeded
-in sessions 2–3 and not in session 1, which is the harness reporting the same
-thing.
+The signed effect never changed. The magnitude did — and it does not move
+randomly: the two quiet sessions sit at **1.38× and 1.48×**, the two loaded
+sessions at **1.59× and 1.72×**. The QDQ graph is the sensitive one because it
+crosses the PCIe bus **21 times per inference**, so CPU scheduling pressure and
+memcpy latency land directly in its p50, while FP32 never leaves the device.
+The measurement noise shrinks with the machine too: QDQ's p50 standard deviation
+across trials was **0.023 ms** on the quiet run against 0.14–0.17 ms on the
+loaded ones — the harness's own p95/p50 warning fired in the loaded sessions and
+not in session 4's INT8 numbers.
 
-**So the honest statement is: INT8 was slower in 9/9 trials, by 1.5×–1.7×
-depending on what else is running.** Quoting a single figure for this machine
-would be quoting the machine state, not the model.
+**So the number to quote is ~1.4×, with the caveat that it degrades to ~1.7× when
+the CPU is busy.** Quoting a single figure for this machine without saying which
+state it came from would be quoting the machine, not the model.
 
 - **This is the engineering finding worth reporting.** "Quantise the model to
   make it faster" is not a rule; it is a hypothesis about the backend. Measured
@@ -381,15 +393,18 @@ would be quoting the machine state, not the model.
   The tail is therefore **not characterised**, and no conclusion here uses p95.
   Everything rests on p50. A much longer run on an idle machine would be needed
   to say anything about the tail, and this desktop has background GPU load.
-- **Repeatability was checked across three separate sessions** (`confirm_quant.py`
-  for the first, then `compare_models.py` with the full four-model set twice
-  more, all interleaved at 50 warmup / 500 iters). INT8 was slower in all nine
-  trials, so the direction is established. The magnitude is stated as a range
-  (1.48–1.72× by session) rather than a point estimate — see "Why the ratio moves
-  between sessions".
-- **Calibration used 512 train-split images, MinMax, per-channel weights.** No
-  comparison across calibration methods was done (limitation #7 below), and no
-  per-tensor-weight control run was done either.
+- **Repeatability was checked across four separate sessions** (`confirm_quant.py`
+  for the first, then `compare_models.py` with the full four-model set three more
+  times — the last on a quiet machine, 5 trials — all interleaved at 50 warmup /
+  500 iters). INT8 was slower in all **fourteen** trials, so the direction is
+  established. The magnitude is stated as a range (1.38–1.72× by session, which
+  tracks background load) rather than a point estimate — see "Why the ratio moves
+  between sessions". `results/model-comparison-quiet.json` is the quiet run and
+  records the machine state it was measured in.
+- **Calibration used 512 train-split images and per-channel weights.** Three
+  calibration methods and both weight granularities were then compared — see
+  "What did *not* move the needle"; all four effects were inside noise, and the
+  test set cannot resolve differences below ~0.5 points.
 - **Activations are per-tensor.** Per-channel activations would need a custom
   quantiser and were not attempted. Per-channel *weights* are verified from the
   file rather than assumed — see `inspect_quant.py`.
@@ -422,8 +437,8 @@ then `python compare_models.py`, then `python inspect_quant.py`.
 | Test samples changing prediction | — | 4 / 2005 | 19 / 2005 | **167 / 2005** |
 | max abs logit diff | — | 1.6e-03 | 0.445 | 0.614 |
 | Graph nodes on CPU | 0% | 0% | 13% | **78%** |
-| inference p50, session 3 (3 trials) | 1.019 ms | 0.932 ms | 1.754 ms | 1.837 ms |
-| vs FP32 | — | 0.92× | 1.72× | **1.80×** |
+| inference p50, quiet session, 5 trials | 0.929 ms | 0.845 ms | 1.278 ms | 1.550 ms |
+| vs FP32 | — | 0.91× | **1.38×** | **1.67×** |
 
 Four things follow, and the first is the one worth remembering:
 
@@ -454,11 +469,15 @@ Four things follow, and the first is the one worth remembering:
    **the more portable format (QDQ) is also the accurate one**, and the "INT8
    accelerator" format is the one that falls off the GPU.
 
-4. **QOperator is the slowest of the four**, slower than QDQ in 6/6 interleaved
-   trials, consistent with 78% of its graph crossing back to the CPU. It is still
-   only ~4% slower than QDQ on p50, which is itself informative: the bottleneck
-   is the quantise/dequantise and memcpy traffic, not the arithmetic that got
-   moved to the CPU.
+4. **QOperator is the slowest of the four** — slower than QDQ in **10 of 11**
+   interleaved trials across three sessions, consistent with 78% of its graph
+   sitting on the CPU. The single exception was a *loaded* session where QDQ
+   degraded more than QOperator did: both are contended, but QDQ is the one
+   paying 21 host↔device copies. On the quiet session the gap is stable and
+   larger — QOperator p50 1.550 ms against QDQ 1.278 ms, i.e. **1.21×**, holding
+   in 5/5 trials. Either way both INT8 formats remain far slower than FP32, and
+   neither is accelerated by having become integer: the bottleneck is the
+   quantise/dequantise and copy traffic, not the arithmetic that moved to the CPU.
 
 **Interview-safe summary:** *"I measured both INT8 formats rather than assuming
 they were equivalent. They produced identical quantisation parameters and a
@@ -466,6 +485,54 @@ they were equivalent. They produced identical quantisation parameters and a
 of its nodes on the CPU because the CUDA execution provider has no integer
 kernels. So the portable format won on both counts, and 'we quantised to INT8'
 is not a statement about speed until you know where the nodes ran."*
+
+---
+
+## What did *not* move the needle: weight granularity and calibration method
+
+`quantize.py` calls `per_channel=True` and describes it in a comment as "the single
+biggest accuracy win". That is the standard claim, and it was inherited rather than
+measured — the same failure mode as trusting `get_available_providers()`. So the
+flag is now exposed (`--weight-granularity per-tensor`) and the three calibration
+methods are one argument apart, and both claims were tested like everything else
+here: same test split, paired test, interleaved timing.
+
+| INT8 variant | Test accuracy | vs FP32 (paired) | 95% CI | McNemar p | verdict |
+|---|---|---|---|---|---|
+| per-channel weights, MinMax *(default)* | 0.7656 | +0.15 pts | [−0.25, +0.55] | 0.65 | inside noise |
+| **per-tensor weights**, MinMax | 0.7636 | −0.05 pts | [−0.50, +0.40] | 1.00 | inside noise |
+| per-channel weights, **Entropy** | 0.7651 | +0.10 pts | [−0.25, +0.45] | 0.79 | inside noise |
+| per-channel weights, **Percentile** | 0.7626 | −0.15 pts | [−0.55, +0.20] | 0.61 | inside noise |
+
+Per-tensor against per-channel, tested directly as a pair: **−0.20 pts,
+CI [−0.65, +0.25], p = 0.52**, with 22 of 2005 samples changing prediction.
+Latency is indistinguishable too (1.49× vs 1.50× FP32 — per-channel costs one
+extra vector lookup, and this graph is not compute-bound anyway).
+
+**This is a limit of resolution, not a proof of equality.** 2005 test samples
+resolve differences of roughly 0.5–1.0 points and nothing finer. What these four
+runs establish is *"no effect larger than about 0.7 points on this model"* — a
+weaker and more honest claim than "granularity does not matter". The project
+therefore reports the per-channel setting as **not shown to help here**, rather
+than as a win it inherited from the documentation.
+
+**It is also specifically a statement about this model.** The structural evidence
+still says the channel ranges are heterogeneous: `inspect_quant.py` measures a
+median **3.4×** widest-to-narrowest scale ratio inside a weight tensor, so under a
+single shared scale the narrowest channel keeps only **25 of 255** levels. That is
+precisely the condition per-channel quantisation exists to fix, and it still buys
+nothing measurable — because this ResNet-18 is **underfitting** (train accuracy
+0.80 with 11.17 M parameters, see the baseline section) and its accuracy is limited
+by the data, not by weight rounding. The model where granularity *should* show up
+is the one the project plan already lists as an optional extra: **MobileNetV3,
+whose depthwise convolutions have much wider per-channel range spread.** That is
+where to look for the effect, and saying so is more useful than repeating the
+claim.
+
+**Interview-safe summary:** *"I measured the two knobs everyone repeats and could
+not detect an effect from either — 0.2 points on a ±0.5 point interval over 2005
+samples. So I report them as below my test set's resolution instead of claiming a
+benefit, and I can name the model and the measurement that would settle it."*
 
 ---
 
@@ -486,7 +553,8 @@ implied capability. Full list in the project plan; the load-bearing ones:
 | 8 | **LLM stage is a simplified integration**, not a production system; no fine-tuning. |
 | 9 | **Hardware-specific numbers.** All figures were measured on one machine at specific software versions (see `ENVIRONMENT.md`); they change elsewhere. See "Why the ratio moves between sessions" — the INT8 penalty in particular depends on what else is running. |
 | 10 | **The QOperator accuracy loss is attributed, not isolated.** Identical quantisation parameters rule out calibration as the cause, but per-layer error propagation through integer requantisation was not measured. |
-| 11 | **No per-tensor-weight control.** `per_channel=True` is verified in the emitted files (42/42 weight tensors carry per-channel scales, and the channel ranges span a median 3.4×), but the accuracy cost of turning it off was not measured. |
+| 11 | **Effects below ~0.5 points are not resolvable.** Weight granularity and calibration method were both compared and both came back inside noise. That is a bound on the effect, not evidence it is zero, and 2005 test samples cannot do better. |
+| 12 | **No per-layer or activation-range analysis.** The claim that this model is insensitive to weight rounding because it is underfitting is an explanation consistent with the measurements, not a separately demonstrated mechanism. |
 
 ---
 
