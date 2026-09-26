@@ -1,0 +1,432 @@
+{
+  "recorded_at": "2026-09-26T02:38:30.993869+00:00",
+  "reference": "fp32",
+  "accuracy_split": "test",
+  "calibration_split": "train",
+  "n_test_samples": 2005,
+  "machine_state_before": {
+    "device_total_mb": 12288,
+    "device_used_mb": 1376,
+    "device_free_mb": 10711,
+    "device_utilization_pct": 23
+  },
+  "machine_state_after": {
+    "device_total_mb": 12288,
+    "device_used_mb": 1518,
+    "device_free_mb": 10569,
+    "device_utilization_pct": 13
+  },
+  "models": {
+    "fp32": "models\\resnet18-dermamnist-fp32.onnx",
+    "fp16": "models\\resnet18-dermamnist-fp16.onnx",
+    "int8-qdq": "models\\resnet18-dermamnist-int8-qdq.onnx",
+    "int8-qoperator": "models\\resnet18-dermamnist-int8-qoperator.onnx"
+  },
+  "sizes_mb": {
+    "fp32": 42.61,
+    "fp16": 21.31,
+    "int8-qdq": 10.77,
+    "int8-qoperator": 10.71
+  },
+  "accuracy": {
+    "fp32": {
+      "accuracy": 0.7641,
+      "n_correct": 1532,
+      "n_samples": 2005,
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    "fp16": {
+      "accuracy": 0.7661,
+      "n_correct": 1536,
+      "n_samples": 2005,
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    "int8-qdq": {
+      "accuracy": 0.7656,
+      "n_correct": 1535,
+      "n_samples": 2005,
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    "int8-qoperator": {
+      "accuracy": 0.7436,
+      "n_correct": 1491,
+      "n_samples": 2005,
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    }
+  },
+  "paired_vs_reference": {
+    "fp16": {
+      "accuracy_diff_pts_vs_reference": 0.2,
+      "diff_ci95_pts": [
+        0.05,
+        0.4
+      ],
+      "ci_excludes_zero": true,
+      "mcnemar_significant_at_5pct": false,
+      "significant": false,
+      "n_samples_differing_predictions": 4,
+      "mcnemar": {
+        "reference_right_other_wrong": 0,
+        "reference_wrong_other_right": 4,
+        "discordant": 4,
+        "exact_p_value": 0.125
+      }
+    },
+    "int8-qdq": {
+      "accuracy_diff_pts_vs_reference": 0.15,
+      "diff_ci95_pts": [
+        -0.25,
+        0.55
+      ],
+      "ci_excludes_zero": false,
+      "mcnemar_significant_at_5pct": false,
+      "significant": false,
+      "n_samples_differing_predictions": 19,
+      "mcnemar": {
+        "reference_right_other_wrong": 8,
+        "reference_wrong_other_right": 11,
+        "discordant": 19,
+        "exact_p_value": 0.647606
+      }
+    },
+    "int8-qoperator": {
+      "accuracy_diff_pts_vs_reference": -2.05,
+      "diff_ci95_pts": [
+        -3.29,
+        -0.75
+      ],
+      "ci_excludes_zero": true,
+      "mcnemar_significant_at_5pct": true,
+      "significant": true,
+      "n_samples_differing_predictions": 167,
+      "mcnemar": {
+        "reference_right_other_wrong": 104,
+        "reference_wrong_other_right": 63,
+        "discordant": 167,
+        "exact_p_value": 0.001878
+      }
+    }
+  },
+  "provider_placement": {
+    "fp32": {
+      "registered_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "probe_runs": 5,
+      "node_executions_total": 240,
+      "node_executions_by_provider": {
+        "CUDAExecutionProvider": 240
+      },
+      "graph_nodes_by_provider": {
+        "CUDAExecutionProvider": 48
+      },
+      "graph_nodes_total": 48,
+      "ops_by_provider": {
+        "CUDAExecutionProvider": {
+          "Conv": 100,
+          "Relu": 85,
+          "Add": 40,
+          "GlobalAveragePool": 5,
+          "Flatten": 5,
+          "Gemm": 5
+        }
+      },
+      "cpu_node_fraction": 0.0,
+      "profile_file": "results\\.ort_profile\\resnet18-dermamnist-fp32_2026-09-26_09-37-57.json"
+    },
+    "fp16": {
+      "registered_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "probe_runs": 5,
+      "node_executions_total": 250,
+      "node_executions_by_provider": {
+        "CUDAExecutionProvider": 250
+      },
+      "graph_nodes_by_provider": {
+        "CUDAExecutionProvider": 50
+      },
+      "graph_nodes_total": 50,
+      "ops_by_provider": {
+        "CUDAExecutionProvider": {
+          "Cast": 10,
+          "Conv": 100,
+          "Relu": 85,
+          "Add": 40,
+          "GlobalAveragePool": 5,
+          "Flatten": 5,
+          "Gemm": 5
+        }
+      },
+      "cpu_node_fraction": 0.0,
+      "profile_file": "results\\.ort_profile\\resnet18-dermamnist-fp16_2026-09-26_09-37-57.json"
+    },
+    "int8-qdq": {
+      "registered_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "probe_runs": 5,
+      "node_executions_total": 830,
+      "node_executions_by_provider": {
+        "CPUExecutionProvider": 105,
+        "CUDAExecutionProvider": 725
+      },
+      "graph_nodes_by_provider": {
+        "CPUExecutionProvider": 21,
+        "CUDAExecutionProvider": 145
+      },
+      "graph_nodes_total": 166,
+      "ops_by_provider": {
+        "CPUExecutionProvider": {
+          "DequantizeLinear": 105
+        },
+        "CUDAExecutionProvider": {
+          "MemcpyFromHost": 105,
+          "QuantizeLinear": 160,
+          "DequantizeLinear": 305,
+          "Conv": 100,
+          "Add": 40,
+          "GlobalAveragePool": 5,
+          "Flatten": 5,
+          "Gemm": 5
+        }
+      },
+      "cpu_node_fraction": 0.1265,
+      "profile_file": "results\\.ort_profile\\resnet18-dermamnist-int8-qdq_2026-09-26_09-37-57.json"
+    },
+    "int8-qoperator": {
+      "registered_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "probe_runs": 5,
+      "node_executions_total": 205,
+      "node_executions_by_provider": {
+        "CUDAExecutionProvider": 45,
+        "CPUExecutionProvider": 160
+      },
+      "graph_nodes_by_provider": {
+        "CUDAExecutionProvider": 9,
+        "CPUExecutionProvider": 32
+      },
+      "graph_nodes_total": 41,
+      "ops_by_provider": {
+        "CUDAExecutionProvider": {
+          "QuantizeLinear": 10,
+          "MemcpyToHost": 10,
+          "MemcpyFromHost": 10,
+          "DequantizeLinear": 10,
+          "Flatten": 5
+        },
+        "CPUExecutionProvider": {
+          "Transpose": 10,
+          "QLinearConv": 100,
+          "QLinearAdd": 40,
+          "QLinearGlobalAveragePool": 5,
+          "QGemm": 5
+        }
+      },
+      "cpu_node_fraction": 0.7805,
+      "profile_file": "results\\.ort_profile\\resnet18-dermamnist-int8-qoperator_2026-09-26_09-37-57.json"
+    }
+  },
+  "latency": {
+    "config": {
+      "trials": 5,
+      "warmup": 50,
+      "iters": 500,
+      "order": "interleaved"
+    },
+    "raw": {
+      "fp32": {
+        "inference": [
+          0.857,
+          0.851,
+          1.01,
+          0.866,
+          1.06
+        ],
+        "inference_p95": [
+          1.871,
+          2.055,
+          2.286,
+          1.977,
+          2.134
+        ],
+        "p95_over_p50": [
+          2.184,
+          2.415,
+          2.264,
+          2.282,
+          2.014
+        ],
+        "end_to_end": [
+          0.992,
+          0.99,
+          0.988,
+          0.993,
+          0.988
+        ]
+      },
+      "fp16": {
+        "inference": [
+          0.841,
+          0.869,
+          0.83,
+          0.822,
+          0.864
+        ],
+        "inference_p95": [
+          1.881,
+          1.867,
+          1.881,
+          1.821,
+          1.747
+        ],
+        "p95_over_p50": [
+          2.237,
+          2.149,
+          2.266,
+          2.215,
+          2.021
+        ],
+        "end_to_end": [
+          1.011,
+          0.994,
+          0.982,
+          0.998,
+          1.015
+        ]
+      },
+      "int8-qdq": {
+        "inference": [
+          1.285,
+          1.312,
+          1.257,
+          1.248,
+          1.288
+        ],
+        "inference_p95": [
+          2.345,
+          2.433,
+          2.332,
+          2.354,
+          2.315
+        ],
+        "p95_over_p50": [
+          1.825,
+          1.854,
+          1.856,
+          1.886,
+          1.797
+        ],
+        "end_to_end": [
+          1.507,
+          1.416,
+          1.422,
+          1.424,
+          1.424
+        ]
+      },
+      "int8-qoperator": {
+        "inference": [
+          1.589,
+          1.512,
+          1.482,
+          1.562,
+          1.603
+        ],
+        "inference_p95": [
+          2.355,
+          1.955,
+          1.928,
+          1.993,
+          2.005
+        ],
+        "p95_over_p50": [
+          1.483,
+          1.293,
+          1.301,
+          1.276,
+          1.251
+        ],
+        "end_to_end": [
+          1.924,
+          1.833,
+          1.831,
+          1.832,
+          2.068
+        ]
+      }
+    },
+    "summary": {
+      "fp32": {
+        "inference_p50_mean_ms": 0.929,
+        "inference_p50_sd_ms": 0.088,
+        "inference_p50_range_ms": [
+          0.851,
+          1.06
+        ],
+        "inference_p95_mean_ms": 2.065,
+        "end_to_end_p50_mean_ms": 0.99,
+        "end_to_end_p50_sd_ms": 0.002,
+        "inference_ratio_vs_reference": 1.0,
+        "end_to_end_ratio_vs_reference": 1.0
+      },
+      "fp16": {
+        "inference_p50_mean_ms": 0.845,
+        "inference_p50_sd_ms": 0.018,
+        "inference_p50_range_ms": [
+          0.822,
+          0.869
+        ],
+        "inference_p95_mean_ms": 1.839,
+        "end_to_end_p50_mean_ms": 1.0,
+        "end_to_end_p50_sd_ms": 0.012,
+        "inference_ratio_vs_reference": 0.91,
+        "end_to_end_ratio_vs_reference": 1.01
+      },
+      "int8-qdq": {
+        "inference_p50_mean_ms": 1.278,
+        "inference_p50_sd_ms": 0.023,
+        "inference_p50_range_ms": [
+          1.248,
+          1.312
+        ],
+        "inference_p95_mean_ms": 2.356,
+        "end_to_end_p50_mean_ms": 1.439,
+        "end_to_end_p50_sd_ms": 0.034,
+        "inference_ratio_vs_reference": 1.376,
+        "end_to_end_ratio_vs_reference": 1.454
+      },
+      "int8-qoperator": {
+        "inference_p50_mean_ms": 1.55,
+        "inference_p50_sd_ms": 0.046,
+        "inference_p50_range_ms": [
+          1.482,
+          1.603
+        ],
+        "inference_p95_mean_ms": 2.047,
+        "end_to_end_p50_mean_ms": 1.898,
+        "end_to_end_p50_sd_ms": 0.092,
+        "inference_ratio_vs_reference": 1.668,
+        "end_to_end_ratio_vs_reference": 1.917
+      }
+    }
+  }
+}

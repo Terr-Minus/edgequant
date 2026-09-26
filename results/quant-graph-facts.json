@@ -1,0 +1,212 @@
+{
+  "recorded_at": "2026-09-26T02:31:01.094468+00:00",
+  "note": "static graph inspection; no runtime, no GPU",
+  "models": {
+    "resnet18-dermamnist-fp16": {
+      "path": "models\\resnet18-dermamnist-fp16.onnx",
+      "size_mb": 21.31,
+      "op_inventory": {},
+      "weight_quantizers": 0,
+      "weight_granularity": {
+        "per-channel": 0,
+        "per-tensor": 0
+      },
+      "activation_quantizers": 0,
+      "activation_granularity": {
+        "per-channel": 0,
+        "per-tensor": 0
+      },
+      "weight_scale_examples": [],
+      "channel_spread": {
+        "tensors_measured": 0,
+        "max_widest_over_narrowest": null,
+        "median_widest_over_narrowest": null,
+        "worst_channel_levels": null
+      }
+    },
+    "resnet18-dermamnist-int8-qdq": {
+      "path": "models\\resnet18-dermamnist-int8-qdq.onnx",
+      "size_mb": 10.77,
+      "op_inventory": {
+        "DequantizeLinear": 74,
+        "QuantizeLinear": 32
+      },
+      "weight_quantizers": 42,
+      "weight_granularity": {
+        "per-channel": 42,
+        "per-tensor": 0
+      },
+      "activation_quantizers": 32,
+      "activation_granularity": {
+        "per-channel": 0,
+        "per-tensor": 32
+      },
+      "weight_scale_examples": [
+        {
+          "op": "DequantizeLinear",
+          "weight": "fc.bias_quantized",
+          "weight_dtype": "int32",
+          "weight_shape": [
+            7
+          ],
+          "scale": "fc.bias_quantized_scale",
+          "scale_shape": [
+            7
+          ],
+          "granularity": "per-channel",
+          "n_channels": 7
+        },
+        {
+          "op": "DequantizeLinear",
+          "weight": "fc.weight_quantized",
+          "weight_dtype": "int8",
+          "weight_shape": [
+            7,
+            512
+          ],
+          "scale": "fc.weight_scale",
+          "scale_shape": [
+            7
+          ],
+          "granularity": "per-channel",
+          "n_channels": 7
+        },
+        {
+          "op": "DequantizeLinear",
+          "weight": "onnx::Conv_192_quantized",
+          "weight_dtype": "int8",
+          "weight_shape": [
+            64,
+            3,
+            3,
+            3
+          ],
+          "scale": "onnx::Conv_192_scale",
+          "scale_shape": [
+            64
+          ],
+          "granularity": "per-channel",
+          "n_channels": 64
+        }
+      ],
+      "channel_spread": {
+        "tensors_measured": 42,
+        "max_widest_over_narrowest": 10.41,
+        "median_widest_over_narrowest": 3.39,
+        "worst_channel_levels": 25.4
+      }
+    },
+    "resnet18-dermamnist-int8-qoperator": {
+      "path": "models\\resnet18-dermamnist-int8-qoperator.onnx",
+      "size_mb": 10.71,
+      "op_inventory": {
+        "DequantizeLinear": 2,
+        "QGemm": 1,
+        "QLinearAdd": 8,
+        "QLinearConv": 20,
+        "QLinearGlobalAveragePool": 1,
+        "QuantizeLinear": 2
+      },
+      "weight_quantizers": 21,
+      "weight_granularity": {
+        "per-channel": 21,
+        "per-tensor": 0
+      },
+      "activation_quantizers": 2,
+      "activation_granularity": {
+        "per-channel": 0,
+        "per-tensor": 2
+      },
+      "weight_scale_examples": [
+        {
+          "op": "QLinearConv",
+          "weight": "onnx::Conv_192_quantized",
+          "weight_dtype": "int8",
+          "weight_shape": [
+            64,
+            3,
+            3,
+            3
+          ],
+          "scale": "onnx::Conv_192_scale",
+          "scale_shape": [
+            64
+          ],
+          "granularity": "per-channel",
+          "n_channels": 64
+        },
+        {
+          "op": "QLinearConv",
+          "weight": "onnx::Conv_195_quantized",
+          "weight_dtype": "int8",
+          "weight_shape": [
+            64,
+            64,
+            3,
+            3
+          ],
+          "scale": "onnx::Conv_195_scale",
+          "scale_shape": [
+            64
+          ],
+          "granularity": "per-channel",
+          "n_channels": 64
+        },
+        {
+          "op": "QLinearConv",
+          "weight": "onnx::Conv_198_quantized",
+          "weight_dtype": "int8",
+          "weight_shape": [
+            64,
+            64,
+            3,
+            3
+          ],
+          "scale": "onnx::Conv_198_scale",
+          "scale_shape": [
+            64
+          ],
+          "granularity": "per-channel",
+          "n_channels": 64
+        }
+      ],
+      "channel_spread": {
+        "tensors_measured": 21,
+        "max_widest_over_narrowest": 10.41,
+        "median_widest_over_narrowest": 3.39,
+        "worst_channel_levels": 25.4
+      }
+    }
+  },
+  "scale_comparison": {
+    "baseline": "resnet18-dermamnist-int8-qdq",
+    "vs": {
+      "resnet18-dermamnist-fp16": {
+        "shared_weights": 0,
+        "note": "no weight tensors in common; scale values cannot be compared",
+        "baseline_weights": 42,
+        "other_weights": 0
+      },
+      "resnet18-dermamnist-int8-qdq": {
+        "baseline": "resnet18-dermamnist-int8-qdq",
+        "shared_weights": 42,
+        "baseline_only": 0,
+        "other_only": 0,
+        "shape_mismatches": 0,
+        "max_relative_scale_difference": 0.0,
+        "worst_tensor": null,
+        "identical_within_1e-6": true
+      },
+      "resnet18-dermamnist-int8-qoperator": {
+        "baseline": "resnet18-dermamnist-int8-qdq",
+        "shared_weights": 21,
+        "baseline_only": 21,
+        "other_only": 0,
+        "shape_mismatches": 0,
+        "max_relative_scale_difference": 0.0,
+        "worst_tensor": null,
+        "identical_within_1e-6": true
+      }
+    }
+  }
+}

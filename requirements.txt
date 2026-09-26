@@ -1,4 +1,10 @@
-﻿cloudpickle==3.1.2
+# torch and torchvision are CUDA builds. The `+cu121` local version strings do
+# not exist on PyPI, so without the extra index below this file fails with
+# "No matching distribution found for torch==2.5.1+cu121" -- which is exactly
+# what a reader following README.md would hit.
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+cloudpickle==3.1.2
 colorama==0.4.6
 coloredlogs==15.0.1
 filelock==3.32.3

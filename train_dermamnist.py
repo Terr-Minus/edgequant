@@ -19,7 +19,8 @@ Data-split discipline (the rule this script exists to keep)
     TEST split   -> accuracy reporting ONLY, never calibration
 
 Using the test split for calibration would leak test data into the quantisation
-process and inflate the reported accuracy. See PLAN-项目计划.md.
+process and inflate the reported accuracy. See the data-split discipline section
+of README.md.
 
 Usage
 -----
@@ -132,7 +133,7 @@ def main() -> int:
         raise SystemExit(
             "CUDA is not available to torch. You are probably in an environment "
             "with the CPU-only build. Run `python -c \"import torch; print(torch.__version__)\"` "
-            "and check for a +cpu suffix. See PLAN-项目计划.md Day 1."
+            "and check for a +cpu suffix. See ENVIRONMENT.md."
         )
 
     torch.manual_seed(args.seed)

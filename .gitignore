@@ -6,9 +6,18 @@ data/
 # Trained checkpoints. Reproducible from train_dermamnist.py + a recorded seed.
 checkpoints/
 
-# Benchmark output. These ARE the deliverable numbers, but they live in the
-# working tree; publish the ones you cite in README/report explicitly.
-results/
+# Benchmark, quantisation and comparison output. These ARE the deliverable
+# numbers, so the JSON records themselves are committed: every figure quoted in
+# README.md can then be traced back to the record that produced it, instead of
+# the README citing files a reader cannot open.
+#
+# `results/*` plus a negation is required here. Git cannot re-include a file
+# whose parent directory is excluded, so a plain `results/` rule means nothing
+# inside it can ever be committed -- which is how the README ended up
+# referencing eight result files that would have 404'd on GitHub.
+# Large artefacts (onnxruntime profiler dumps, captured stderr) stay ignored.
+results/*
+!results/*.json
 
 # ONNX exports and quantised models
 *.onnx
@@ -32,3 +41,11 @@ venv/
 # ---- Scratch ----
 *.log
 scratch/
+
+# ---- Private, not part of the published project ----
+# LEARNING-NOTES.md is a personal learning log: question sequences, corrections
+# of my own wrong explanations, interview-coaching notes and cross-window task
+# lists. It is deliberately kept OUT of the public repository while staying on
+# disk at the same path, so the study workflow is unaffected. Published repos
+# should carry engineering evidence, not preparation strategy.
+LEARNING-NOTES.md

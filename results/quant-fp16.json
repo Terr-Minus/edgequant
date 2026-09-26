@@ -1,0 +1,135 @@
+{
+  "recorded_at": "2026-09-25T05:08:11.394236+00:00",
+  "checkpoint": "checkpoints/resnet18-dermamnist-fp32.pt",
+  "checkpoint_test_accuracy": 0.7650872817955112,
+  "arch": "resnet18-28x28",
+  "quant_format": "qdq",
+  "calib_method": "minmax",
+  "calib_samples": 512,
+  "calibration_split": "train",
+  "accuracy_split": "test",
+  "sizes_bytes": {
+    "fp32": 44680005,
+    "fp16": 22348269
+  },
+  "equivalence_vs_fp32": {
+    "fp16": {
+      "max_abs_diff": 0.0015692710876464844,
+      "mean_abs_diff": 0.0007324995822273195,
+      "max_rel_diff": 0.0001880204799817875,
+      "argmax_flips": 0,
+      "n_samples": 16
+    }
+  },
+  "accuracy": {
+    "fp32": {
+      "accuracy": 0.7640897755610973,
+      "n_samples": 2005,
+      "wall_seconds": 0.7,
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    "fp16": {
+      "accuracy": 0.7660847880299252,
+      "n_samples": 2005,
+      "wall_seconds": 0.57,
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    }
+  },
+  "latency": {
+    "fp32": {
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "inference": {
+        "iters": 200,
+        "warmup": 20,
+        "mean_ms": 1.021,
+        "p50_ms": 0.89,
+        "p95_ms": 1.677,
+        "min_ms": 0.819,
+        "max_ms": 1.953,
+        "stdev_ms": 0.266,
+        "p95_over_p50": 1.884
+      },
+      "preprocess_only": {
+        "iters": 200,
+        "warmup": 20,
+        "mean_ms": 0.117,
+        "p50_ms": 0.116,
+        "p95_ms": 0.123,
+        "min_ms": 0.113,
+        "max_ms": 0.147,
+        "stdev_ms": 0.004,
+        "p95_over_p50": 1.063
+      },
+      "end_to_end": {
+        "iters": 200,
+        "warmup": 20,
+        "mean_ms": 1.132,
+        "p50_ms": 1.018,
+        "p95_ms": 1.562,
+        "min_ms": 0.959,
+        "max_ms": 2.121,
+        "stdev_ms": 0.227,
+        "p95_over_p50": 1.534
+      },
+      "inference_histogram": {
+        "0-1ms": 2,
+        "1-2ms": 9
+      },
+      "peak_reserved_mb": 0.0
+    },
+    "fp16": {
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "inference": {
+        "iters": 200,
+        "warmup": 20,
+        "mean_ms": 1.0,
+        "p50_ms": 0.843,
+        "p95_ms": 1.876,
+        "min_ms": 0.798,
+        "max_ms": 2.164,
+        "stdev_ms": 0.328,
+        "p95_over_p50": 2.225
+      },
+      "preprocess_only": {
+        "iters": 200,
+        "warmup": 20,
+        "mean_ms": 0.117,
+        "p50_ms": 0.116,
+        "p95_ms": 0.121,
+        "min_ms": 0.114,
+        "max_ms": 0.15,
+        "stdev_ms": 0.005,
+        "p95_over_p50": 1.047
+      },
+      "end_to_end": {
+        "iters": 200,
+        "warmup": 20,
+        "mean_ms": 1.133,
+        "p50_ms": 0.997,
+        "p95_ms": 1.717,
+        "min_ms": 0.946,
+        "max_ms": 2.153,
+        "stdev_ms": 0.28,
+        "p95_over_p50": 1.722
+      },
+      "inference_histogram": {
+        "0-1ms": 2,
+        "1-2ms": 7,
+        "2-3ms": 2
+      },
+      "peak_reserved_mb": 0.0
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "recorded_at": "2026-09-25T03:10:57.263057+00:00",
+  "model": "resnet18-28x28",
+  "dataset": "DermaMNIST",
+  "precision": "fp32",
+  "epochs": 10,
+  "batch_size": 128,
+  "lr": 0.001,
+  "seed": 0,
+  "best_val_accuracy": 0.7747,
+  "train_accuracy": 0.7998,
+  "test_accuracy": 0.7651,
+  "train_seconds": 34.2,
+  "torch": "2.5.1+cu121",
+  "cuda_build": "12.1",
+  "gpu": "NVIDIA GeForce RTX 3080 Ti",
+  "checkpoint": "checkpoints/resnet18-dermamnist-fp32.pt"
+}
