@@ -210,7 +210,7 @@ by a large factor.
 > measure it on the target, do not assume it. The desktop number is not a
 > prediction for an NPU.
 
-### Latency is insensitive to background GPU load (measured)
+### Latency is insensitive to background GPU load — for the FP32 path
 
 The same checkpoint was benchmarked with Minecraft (≈25–38% GPU utilisation,
 1.79 GB resident) plus browsers running, and again with them closed:
@@ -225,6 +225,15 @@ A model this small does not contend for the GPU, so latency is stable either way
 Peak per-process memory is unaffected by other applications by construction. The
 metric that *does* move is whole-device VRAM — which is why it is recorded
 separately rather than blended into the headline numbers.
+
+> **This insensitivity does not generalise, and it has a boundary.** It is a
+> property of the **FP32 PyTorch path**, which never leaves the device. The ONNX
+> **INT8 QDQ** model crosses the PCIe bus 21 times per inference, and its p50 did
+> move with background load — from 1.48× FP32 on a quiet machine to 1.72× with
+> browsers and the desktop compositor resident (see "Why the ratio moves between
+> sessions"). "A small model is immune to contention" was the right conclusion
+> for the wrong reason: it is immunity to *GPU* contention, and it says nothing
+> about a path that is CPU- and copy-bound.
 
 ### ONNX export and numerical equivalence
 
@@ -386,8 +395,9 @@ would be quoting the machine state, not the model.
   file rather than assumed — see `inspect_quant.py`.
 - **onnxruntime warns that it inserted 21 Memcpy nodes for the CUDA EP**, which
   it says may hurt performance. This warning appears for the FP32 model. The
-  profiler shows what they cost: the QDQ model crosses the bus 21 times per
-  inference (`.` → `MemcpyFromHost` in the placement table).
+  profiler shows what they cost: the QDQ model carries **21 `MemcpyFromHost`
+  nodes per inference** — that is the Q/DQ boundary traffic, and it is why its
+  latency is the one that moves with background CPU load.
 
 ---
 
