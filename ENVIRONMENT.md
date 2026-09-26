@@ -91,11 +91,15 @@ VRAM**, and record what was running.
 ## Model-download routes measured from this machine (2026-09-26)
 
 Measured *before* choosing anything, because the LLM stage needs a multi-GB
-download and this machine's proxy setup has already cost days (see the
-`https://`-scheme bug in the project handoff). Two rules applied: a genuine
-direct test needs an explicitly empty `ProxyHandler`, since everything else
-silently inherits `HTTP_PROXY`; and both routes get measured, because the proxy
-is unstable rather than uniformly slow.
+download and this machine's proxy setup has already cost days. The trap is worth
+recording because it is invisible: the registry proxy is stored as a **bare
+`127.0.0.1:10809`**, so a client that reads it infers the scheme from the target
+URL and gets `https://127.0.0.1:10809` -- an `https` proxy pointing at a
+plaintext HTTP port, which fails as a TLS handshake while reporting a
+certificate problem. Two rules follow: a genuine direct test needs an explicitly
+empty `ProxyHandler`, since everything else silently inherits `HTTP_PROXY`; and
+both routes get measured, because the proxy is unstable rather than uniformly
+slow.
 
 | Host | direct | via `127.0.0.1:10809` | note |
 |---|---|---|---|
