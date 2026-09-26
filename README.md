@@ -20,7 +20,7 @@ structured description. Nothing leaves the machine.
 | FP32 baseline — latency / VRAM | ✅ **p50 2.26 ms / 60.1 MB peak** (2026-09-25) |
 | ONNX export + numerical equivalence check | ✅ **exported, max abs diff 1.4e-06 (CPU) / 2.6e-04 (CUDA)** |
 | FP16 quantisation | ✅ **21.31 MB, no accuracy loss, no latency gain** |
-| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, slower than FP32 in 14/14 trials** |
+| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss on the CUDA EP, slower than FP32 in 14/14 trials** |
 | INT8 quantisation (QOperator format) | ✅ **10.71 MB, −2.05 pts (statistically real), 78% of nodes execute on the CPU** |
 | INT8 format choice (QDQ vs QOperator) | ✅ **settled by measurement** — see "QDQ vs QOperator" below |
 | Weight granularity + calibration method | ✅ **both measured; neither showed an effect** — see "What did *not* move the needle" |
@@ -317,8 +317,10 @@ which manufactures effects that are not there.
   0.99× across three trials (range 0.97–1.01) is "no change", not "faster".
   FP16 is a free 2× size reduction for this model.
 
-- **INT8: a quarter of the size, no measurable accuracy loss, and slower.**
-  Both halves are solid:
+- **INT8: a quarter of the size, no measurable accuracy loss *on the CUDA EP*, and slower.**
+  The accuracy half of that sentence is provider-dependent — the same file loses 2 points on
+  the CPU EP. See "The same file, two execution providers, two accuracies" below. Both halves
+  are solid:
 
   *Accuracy.* `max abs diff` of 0.445 on logits whose working range is O(1) is
   the expected magnitude for 8-bit quantisation. The 16-random-probe
@@ -385,6 +387,59 @@ state it came from would be quoting the machine, not the model.
   slower.** Anyone reporting only the size and accuracy columns is reporting
   half the result — and the missing half is the one that decides whether the
   change is worth making.
+
+### The same file, two execution providers, two accuracies
+
+The accuracy columns above were measured with the **CUDA** execution provider. That qualifier
+turned out to carry real weight, and it was found by re-measuring rather than by assuming:
+the same ONNX files were run through both providers, with the same test split and the same
+preprocessing, changing **nothing but the provider list**.
+
+| Model | CPU EP | CUDA EP | Predictions differing | Paired McNemar | Bootstrap 95% CI |
+|---|---|---|---|---|---|
+| FP32 | 0.7641 | 0.7641 | **0 / 2005** | p = 1.00 | [0.00, 0.00] |
+| FP16 | 0.7661 | 0.7661 | **0 / 2005** | p = 1.00 | [0.00, 0.00] |
+| **INT8 QDQ** | **0.7466** | **0.7666** | **210 / 2005** | **p = 0.00195** | **[−3.24, −0.75] pts** |
+| INT8 QOperator | 0.7436 | 0.7436 | **0 / 2005** | p = 1.00 | [0.00, 0.00] |
+
+**A 2.00-point difference, tested as a paired difference** on the same samples: 160 of the
+discordant pairs favour CUDA, 100 favour CPU, and exact McNemar gives p = 0.0019 with a
+bootstrap CI that excludes zero. The project's own rule — CI and p-value must agree before a
+gap is called real — is satisfied here, and **not** for the other three rows, which are
+bit-for-bit identical across providers.
+
+**Why only QDQ moves.** The provider does not change the *arithmetic* for the other three:
+FP32 stays in float, FP16 is a dtype cast, and QOperator already had 78% of its nodes on the
+CPU to begin with (see the placement table above), so moving the session changes nothing it
+was doing. QDQ is the one graph whose execution path genuinely differs — on CUDA it
+dequantises to float and convolves in float (accurate, at the cost of 21 host↔device copies
+per inference), while on CPU it runs actual integer kernels.
+
+**This is the same cause as the slowdown, seen from the other side.** The reason QDQ is
+*accurate* on CUDA is the same reason it is *slow*: it is not really doing integer
+arithmetic. Measured on the CPU path it loses 2 points; measured on the CUDA path it loses
+nothing and pays 21 copies instead. *(The kernel-level mechanism is an inference from the
+placement data; what is measured is that the accuracy moves with the provider.)*
+
+**The coincidence worth noticing:** the QDQ-versus-QOperator gap reported above is
+**−2.05 points (p = 0.0019)**. The QDQ-versus-itself-under-a-different-provider gap is
+**−2.00 points (p = 0.00195)**. Two unrelated comparisons landing on the same effect size —
+one attributed to the quantisation *format*, this one to the *execution path* — is consistent
+with the two being different views of the same thing: **in this stack, the accuracy of an
+8-bit model is a property of the execution path, not of the quantised weights.**
+
+The practical consequence is the reason this section exists: **"we quantised it, and accuracy
+did not change" is not a complete statement until you say which provider ran it.** It is the
+same failure mode as trusting `get_available_providers()`.
+
+**How this was found, and a caution about the headline number.** The provider effect was not
+being looked for: it surfaced while producing a per-class breakdown of the FP32 reference.
+That breakdown also showed that **the overall accuracy figure this section argues about is
+itself a poor summary** — see limitation #13: the test split is 66.9% one class, the model
+recalls 0.42 of melanomas, and `0.7641` is largely the majority class. A 2-point shift in an
+aggregate that is dominated by one class is worth less than it looks. The per-class numbers
+are the ones that would decide anything real, and they are in the operator log rather than
+this README because they were produced outside this repository's scripts.
 
 ### Reader's caveats on these numbers
 
@@ -555,6 +610,8 @@ implied capability. Full list in the project plan; the load-bearing ones:
 | 10 | **The QOperator accuracy loss is attributed, not isolated.** Identical quantisation parameters rule out calibration as the cause, but per-layer error propagation through integer requantisation was not measured. |
 | 11 | **Effects below ~0.5 points are not resolvable.** Weight granularity and calibration method were both compared and both came back inside noise. That is a bound on the effect, not evidence it is zero, and 2005 test samples cannot do better. |
 | 12 | **No per-layer or activation-range analysis.** The claim that this model is insensitive to weight rounding because it is underfitting is an explanation consistent with the measurements, not a separately demonstrated mechanism. |
+| 13 | **Overall accuracy hides a severe class imbalance, and no class-balanced analysis was done.** The test split is 66.9% melanocytic nevi (1341 of 2005) against 1.1% dermatofibroma (23). The FP32 reference scores 0.7641 overall but only 0.42 recall on melanoma — where 92 of 223 cases are predicted as benign nevi — and 0.087 on dermatofibroma. **`0.7641` therefore says very little on its own**, and no re-weighting, resampling, or per-class threshold work was attempted. Any clinical reading of these numbers is invalid. |
+| 14 | **p95 is not characterised.** The p95/p50 ratio sits near 2.0 even at 500 iterations, above the harness's own ~1.5 warning line, so no conclusion here rests on p95 — only on p50. A longer run on an idle machine would be needed to say anything about the tail. |
 
 ---
 
