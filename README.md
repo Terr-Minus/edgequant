@@ -20,15 +20,26 @@ structured description. Nothing leaves the machine.
 | FP32 baseline — latency / VRAM | ✅ **p50 2.26 ms / 60.1 MB peak** (2026-09-25) |
 | ONNX export + numerical equivalence check | ✅ **exported, max abs diff 1.4e-06 (CPU) / 2.6e-04 (CUDA)** |
 | FP16 quantisation | ✅ **21.31 MB, no accuracy loss, no latency gain** |
-| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, 1.5× SLOWER** (3 trials) |
+| INT8 quantisation (QDQ, MinMax, per-channel weights) | ✅ **10.77 MB, no accuracy loss, slower than FP32 in 9/9 trials** |
+| INT8 quantisation (QOperator format) | ✅ **10.71 MB, −2.05 pts (statistically real), 78% of nodes execute on the CPU** |
+| INT8 format choice (QDQ vs QOperator) | ✅ **settled by measurement** — see "QDQ vs QOperator" below |
 | LLM structured-output stage | ⬜ not started |
 | Service (FastAPI) + packaging | ⬜ not started |
 
 **Headline result: quantisation bought 4× smaller files and cost nothing in
-accuracy — and did not make inference faster.** On this GPU + ONNX Runtime
-combination INT8 is **1.5× slower** than FP32, confirmed across three
-interleaved trials. See the trade-off table below; this is the project's most
-interesting finding and it is a negative one.
+accuracy — and did not make inference faster.** INT8 (QDQ) was slower than FP32
+in every one of nine interleaved trials across three sessions; the ratio ranged
+1.48× (quiet machine) to 1.72× (browser and desktop GPU load present). See the
+trade-off table below. This is the project's most interesting finding and it is
+a negative one.
+
+**The format matters twice over.** The same quantisation parameters, emitted as
+QDQ and as QOperator, differ by 2 accuracy points and by 78% of the graph's
+placement. ONNX Runtime's CUDA provider implements **no integer kernels at
+all**: "INT8 on the GPU" here means float convolution between quantised
+boundaries, and the QOperator graph — which does use integer ops — has nowhere
+to run them but the CPU. That is measured, not inferred; see the placement probe
+below.
 
 *(This table is updated by hand as stages complete. Nothing here is claimed
 before it has been measured.)*
@@ -109,6 +120,13 @@ python benchmark.py --model checkpoints/resnet18-dermamnist-fp32.pt \
 python quantize.py --precision both          # FP16 + INT8, equivalence + accuracy + latency
 python quantize.py --precision fp16           # FP16 only
 python quantize.py --precision int8 --quant-format qdq --calib-samples 512
+python quantize.py --precision int8 --quant-format qoperator   # the other INT8 format
+
+# 4. compare everything at once: paired accuracy, node placement, interleaved latency
+python compare_models.py --trials 3 --warmup 50 --iters 500
+
+# 5. read the quantisation parameters back out of the files (no GPU needed)
+python inspect_quant.py
 ```
 
 `data/`, `checkpoints/`, `results/` are gitignored. The dataset re-downloads on
@@ -267,6 +285,13 @@ which manufactures effects that are not there.
 | argmax flips (16 probes) | — | 0 / 16 | 0 / 16 |
 | Runtime EP | CUDA | CUDA | CUDA |
 
+> These three columns are **session 1**, on a quiet desktop. The table further
+> down adds the QOperator format, a paired significance test on every accuracy
+> number, and the measured node placement — and shows that the INT8 penalty grows
+> to ~1.7× once browsers and the desktop compositor are competing for the CPU.
+> Read the two tables together; the absolute milliseconds are not comparable
+> between sessions, only the ratios within a session are.
+
 ### Conclusion, stated plainly
 
 **Quantisation here bought size, not speed.**
@@ -275,26 +300,63 @@ which manufactures effects that are not there.
   0.99× across three trials (range 0.97–1.01) is "no change", not "faster".
   FP16 is a free 2× size reduction for this model.
 
-- **INT8: a quarter of the size, no measurable accuracy loss, and 1.5× slower.**
+- **INT8: a quarter of the size, no measurable accuracy loss, and slower.**
   Both halves are solid:
 
   *Accuracy.* `max abs diff` of 0.445 on logits whose working range is O(1) is
-  the expected magnitude for 8-bit quantisation. There were **zero argmax flips**
-  across the equivalence probes, and test accuracy differs by +0.15 points on
-  2005 samples — inside noise. The quantised model is structurally genuine:
-  32 QuantizeLinear, 74 DequantizeLinear, 42 INT8 weight initializers.
+  the expected magnitude for 8-bit quantisation. The 16-random-probe
+  equivalence check saw **zero argmax flips**, and on the real 2005-sample test
+  split only **19 samples change prediction** — a net +3 correct, i.e. +0.15
+  points. Tested as a paired difference (McNemar exact p = 0.65, bootstrap 95%
+  CI on the difference [−0.25, +0.55] points) that is **inside noise**, which is
+  the claim: no measurable loss. The quantised model is structurally genuine:
+  42 quantised weight tensors, every one with a per-channel scale, plus 32
+  QuantizeLinear / 74 DequantizeLinear nodes.
 
-  *Speed.* INT8 ran slower in **every one of three interleaved trials**
-  (1.50×, 1.47×, 1.49×), with a standard deviation of 0.006 ms on p50. This is
-  not noise and it is not a warmup artefact.
+  *Speed.* INT8 (QDQ) ran slower in **every one of nine interleaved trials
+  across three sessions**. The instruction is in the direction, not in a single
+  number: session means were 1.48×, 1.59× and 1.72× FP32, and the per-trial
+  extremes were 1.47× and 1.91×. See "Why the ratio moves between sessions".
 
-- **Why INT8 is slower.** INT8 accelerates inference only when the runtime has
-  integer kernels the hardware actually executes. Here the CUDA
-  ExecutionProvider runs the QDQ graph as explicit
-  QuantizeLinear → Conv → DequantizeLinear sequences, so the model pays
-  dequantisation at every layer boundary and gains no integer matmul — the
-  arithmetic still lands on float tensor cores. **The win requires TensorRT, or
-  an INT8-native accelerator, which this project excludes by scope.**
+- **Why INT8 is slower — measured, not guessed.** INT8 accelerates inference only
+  when the runtime has integer kernels the hardware actually executes. Nothing in
+  `session.get_providers()` says whether that is true, so the graph was profiled
+  node by node (`compare_models.py`):
+
+  | Model | Graph nodes on CUDA | on CPU | What the GPU is actually running |
+  |---|---|---|---|
+  | FP32 | 48 / 48 | 0 | everything |
+  | FP16 | 50 / 50 | 0 | everything |
+  | INT8 QDQ | 145 / 166 | 21 (13%) | **float `Conv`**, on tensors dequantised at every boundary |
+  | INT8 QOperator | 9 / 41 | **32 (78%)** | only `QuantizeLinear`/`DequantizeLinear`/`Memcpy` — every `QLinearConv`, `QLinearAdd`, `QGemm` and `QLinearGlobalAveragePool` runs on the **CPU** |
+
+  So the CUDA ExecutionProvider in this build has **no integer kernels**: it
+  executes the QDQ graph as float convolution between quantised boundaries,
+  which pays 21 host↔device memcpys per inference and gains no integer matmul.
+  The integer ops it *cannot* run are exactly the ones QOperator is made of.
+  **The win requires TensorRT, or an INT8-native accelerator, which this project
+  excludes by scope.**
+
+### Why the ratio moves between sessions
+
+The same models were measured three times on the same machine, hours apart:
+
+| Session | Background | FP32 p50 | INT8-QDQ p50 | QDQ / FP32 |
+|---|---|---|---|---|
+| 1 (2026-09-25, `confirm_quant.py`) | quiet desktop | 0.835 ms | 1.239 ms | **1.48×** (1.47–1.50) |
+| 2 (2026-09-26) | browsers, VS Code, Wallpaper Engine | 0.936 ms | 1.491 ms | **1.59×** (1.47–1.72) |
+| 3 (2026-09-26) | same | 1.019 ms | 1.754 ms | **1.72×** (1.59–1.91) |
+
+The signed effect never changed; the magnitude did, by ~16%. The QDQ graph is the
+sensitive one because it crosses the PCIe bus **21 times per inference** — CPU
+scheduling pressure and memcpy latency show up directly in its p50, while FP32
+never leaves the device. The p95/p50 warning threshold (~1.5) was also exceeded
+in sessions 2–3 and not in session 1, which is the harness reporting the same
+thing.
+
+**So the honest statement is: INT8 was slower in 9/9 trials, by 1.5×–1.7×
+depending on what else is running.** Quoting a single figure for this machine
+would be quoting the machine state, not the model.
 
 - **This is the engineering finding worth reporting.** "Quantise the model to
   make it faster" is not a rule; it is a hypothesis about the backend. Measured
@@ -308,21 +370,92 @@ which manufactures effects that are not there.
 - **p95 is still noisy.** Even at 500 iterations the p95/p50 ratio sits at
   ~2.0 (fp32/fp16) and ~1.8 (int8), above the harness's ~1.5 warning threshold.
   The tail is therefore **not characterised**, and no conclusion here uses p95.
-  Everything rests on p50, whose standard deviation across trials is 0.006–0.008
-  ms. A much longer run on an idle machine would be needed to say anything about
-  the tail, and this desktop has background GPU load.
-- **Repeatability was checked** (`confirm_quant.py`, 3 interleaved trials at 50
-  warmup / 500 iters). INT8 was slower in all three, so the direction is
-  established. The magnitude is stated as a range (1.47–1.50×) rather than a
-  point estimate.
+  Everything rests on p50. A much longer run on an idle machine would be needed
+  to say anything about the tail, and this desktop has background GPU load.
+- **Repeatability was checked across three separate sessions** (`confirm_quant.py`
+  for the first, then `compare_models.py` with the full four-model set twice
+  more, all interleaved at 50 warmup / 500 iters). INT8 was slower in all nine
+  trials, so the direction is established. The magnitude is stated as a range
+  (1.48–1.72× by session) rather than a point estimate — see "Why the ratio moves
+  between sessions".
 - **Calibration used 512 train-split images, MinMax, per-channel weights.** No
-  comparison across calibration methods was done (limitation #7 below).
+  comparison across calibration methods was done (limitation #7 below), and no
+  per-tensor-weight control run was done either.
 - **Activations are per-tensor.** Per-channel activations would need a custom
-  quantiser and were not attempted.
+  quantiser and were not attempted. Per-channel *weights* are verified from the
+  file rather than assumed — see `inspect_quant.py`.
 - **onnxruntime warns that it inserted 21 Memcpy nodes for the CUDA EP**, which
-  it says may hurt performance. This warning appears for the FP32 model. It is
-  one plausible contributor to the fact that FP16 shows no speedup either; the
-  effect was not isolated.
+  it says may hurt performance. This warning appears for the FP32 model. The
+  profiler shows what they cost: the QDQ model crosses the bus 21 times per
+  inference (`.` → `MemcpyFromHost` in the placement table).
+
+---
+
+## QDQ vs QOperator: the same parameters, two different models
+
+Everything above quantises with `QuantFormat.QDQ`. ONNX Runtime's other option
+is `QuantFormat.QOperator`, which **replaces** the float operators with integer
+ones (`QLinearConv`, `QGemm`, …) instead of inserting `QuantizeLinear` /
+`DequantizeLinear` pairs around them. It was never tested in this project until
+now — and it turned out not to be an implementation detail.
+
+Reproduce: `python quantize.py --precision int8 --quant-format qoperator`,
+then `python compare_models.py`, then `python inspect_quant.py`.
+
+| | FP32 | FP16 | INT8 QDQ | INT8 QOperator |
+|---|---|---|---|---|
+| File size | 42.61 MB | 21.31 MB | 10.77 MB | **10.71 MB** |
+| Test accuracy | 0.7641 | 0.7661 | 0.7656 | **0.7436** |
+| Difference vs FP32 | — | +0.20 pts | +0.15 pts | **−2.05 pts** |
+| Paired bootstrap 95% CI | — | [+0.05, +0.40] | [−0.25, +0.55] | **[−3.29, −0.75]** |
+| McNemar exact p | — | 0.125 | 0.648 | **0.0019** |
+| Test samples changing prediction | — | 4 / 2005 | 19 / 2005 | **167 / 2005** |
+| max abs logit diff | — | 1.6e-03 | 0.445 | 0.614 |
+| Graph nodes on CPU | 0% | 0% | 13% | **78%** |
+| inference p50, session 3 (3 trials) | 1.019 ms | 0.932 ms | 1.754 ms | 1.837 ms |
+| vs FP32 | — | 0.92× | 1.72× | **1.80×** |
+
+Four things follow, and the first is the one worth remembering:
+
+1. **A 2-point accuracy gap had to be tested, not eyeballed.** 2005 samples at
+   ~0.76 put one standard error at ~0.95 points, so −2.05 points is about two of
+   them — suggestive, not established. Because both models were evaluated on the
+   *same* samples, the comparison is paired: 167 samples change prediction, the
+   bootstrap CI on the difference excludes zero, and exact McNemar gives
+   p = 0.0019. The FP16 (+0.20 pts) and QDQ (+0.15 pts) columns are the useful
+   control: a CI that just excludes zero with p = 0.13 is **not** a result, and
+   `compare_models.py` requires both tests before printing "REAL".
+
+2. **The accuracy loss is not a calibration difference.** `inspect_quant.py`
+   reads the quantisation parameters back out of both files and compares them
+   tensor by tensor: the 21 weight tensors present in both have a **maximum
+   relative scale difference of 0.000e+00** — bit-identical scales and
+   zero-points from the same MinMax calibration over the same 512 train images.
+   Identical parameters, different accuracy: the difference is in what the
+   kernels *do* with them. QDQ dequantises to float and accumulates the
+   convolution in float; QOperator accumulates in int32 and requantises through
+   a fixed-point multiplier at every layer. That requantisation rounds, and 20
+   convolutions compound it. *(The mechanism is an inference from the structure
+   and the error magnitudes; per-layer error propagation was not measured.)*
+
+3. **QOperator cannot run on this GPU.** The profiler shows 32 of its 41 nodes on
+   the CPU — every integer operator. The CUDA EP in onnxruntime 1.23.2 supports
+   none of them. So the format choice is not just accuracy-vs-portability: here
+   **the more portable format (QDQ) is also the accurate one**, and the "INT8
+   accelerator" format is the one that falls off the GPU.
+
+4. **QOperator is the slowest of the four**, slower than QDQ in 6/6 interleaved
+   trials, consistent with 78% of its graph crossing back to the CPU. It is still
+   only ~4% slower than QDQ on p50, which is itself informative: the bottleneck
+   is the quantise/dequantise and memcpy traffic, not the arithmetic that got
+   moved to the CPU.
+
+**Interview-safe summary:** *"I measured both INT8 formats rather than assuming
+they were equivalent. They produced identical quantisation parameters and a
+2-point accuracy difference, and the profiler showed the integer format had 78%
+of its nodes on the CPU because the CUDA execution provider has no integer
+kernels. So the portable format won on both counts, and 'we quantised to INT8'
+is not a statement about speed until you know where the nodes ran."*
 
 ---
 
@@ -341,7 +474,9 @@ implied capability. Full list in the project plan; the load-bearing ones:
 | 6 | **No TensorRT comparison** — ONNX Runtime only. TensorRT is typically faster but much heavier to deploy; excluded by scope. |
 | 7 | **No real users, no business acceptance.** Self-directed. |
 | 8 | **LLM stage is a simplified integration**, not a production system; no fine-tuning. |
-| 9 | **Hardware-specific numbers.** All figures were measured on one machine at specific software versions (see `ENVIRONMENT.md`); they change elsewhere. |
+| 9 | **Hardware-specific numbers.** All figures were measured on one machine at specific software versions (see `ENVIRONMENT.md`); they change elsewhere. See "Why the ratio moves between sessions" — the INT8 penalty in particular depends on what else is running. |
+| 10 | **The QOperator accuracy loss is attributed, not isolated.** Identical quantisation parameters rule out calibration as the cause, but per-layer error propagation through integer requantisation was not measured. |
+| 11 | **No per-tensor-weight control.** `per_channel=True` is verified in the emitted files (42/42 weight tensors carry per-channel scales, and the channel ranges span a median 3.4×), but the accuracy cost of turning it off was not measured. |
 
 ---
 
@@ -353,6 +488,8 @@ train_dermamnist.py   fine-tune ResNet-18 on DermaMNIST -> FP32 checkpoint + tes
 benchmark.py          latency (mean/p50/p95), peak VRAM, environment snapshot -> JSON
 quantize.py           ONNX export -> FP16 / INT8 -> equivalence check -> accuracy -> latency
 confirm_quant.py      repeats the quantisation latency comparison, interleaved, 3 trials
+compare_models.py     N models: paired accuracy significance, per-node provider placement, interleaved latency
+inspect_quant.py      reads quantisation parameters back out of the ONNX file (per-tensor vs per-channel, scale identity)
 data/                 MedMNIST downloads            (gitignored, re-downloadable)
 checkpoints/          trained weights                (gitignored)
 models/               ONNX exports, all precisions   (gitignored)
@@ -364,18 +501,32 @@ the exact architecture to load a `state_dict`, and two copy-pasted definitions
 drift until `load_state_dict` fails with confusing missing/unexpected keys. One
 definition, imported everywhere.
 
-### Two methodology details a reviewer will ask about
+`compare_models.py` deliberately does *not* replace `confirm_quant.py`: the
+latter is the script that produced `results/quant-repeatability.json`, and a
+published number should keep pointing at the script that measured it. The newer
+file generalises the trial loop to an arbitrary model set and adds the two things
+a latency table cannot show — paired significance and node placement.
 
-Both are implemented in `benchmark.py` on purpose:
+### Five methodology details a reviewer will ask about
 
-- **`torch.cuda.synchronize()` on both sides of every timed iteration.** CUDA
-  kernel launches are asynchronous; timing without a synchronise measures
-  *queue-submission* time, not compute time. The resulting numbers look fast and
-  are wrong.
+- **`torch.cuda.synchronize()` on both sides of every timed iteration**
+  (`benchmark.py`). CUDA kernel launches are asynchronous; timing without a
+  synchronise measures *queue-submission* time, not compute time. The resulting
+  numbers look fast and are wrong.
 - **p95/p50 ratio is reported and warned on.** A ratio above ~1.5 usually means
   warmup was too short, another process was sharing the GPU, or thermal throttling
   was kicking in — i.e. the run is not trustworthy. The script prints a warning
   rather than quietly emitting a suspicious p95.
+- **Models are interleaved within each trial** (`compare_models.py`). Running all
+  of one precision and then all of the next lets thermal drift and background load
+  correlate with precision, which manufactures effects that are not there.
+- **Accuracy differences are tested as paired differences** (`compare_models.py`).
+  Two accuracies on the same test samples are not two independent proportions;
+  the per-sample predictions are kept, and McNemar's exact test plus a bootstrap
+  CI on the difference are required to agree before a gap is called real.
+- **Node placement comes from the profiler, not from `session.get_providers()`**
+  (`compare_models.py`). The latter lists the execution providers that were
+  *registered*; a graph can register CUDA and execute 78% of its nodes on the CPU.
 
 ## Licence / provenance
 
